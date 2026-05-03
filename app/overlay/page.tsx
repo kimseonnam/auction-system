@@ -513,7 +513,15 @@ export default function OverlayPage() {
     const savedRegisteredPlayers = safeJsonParse<LocalPlayer[]>(localStorage.getItem('players'), [])
     const snapshotAuctionPlayers = Array.isArray(snapshot.auction_players) ? snapshot.auction_players : []
     const snapshotPlayers = Array.isArray(snapshot.players) ? snapshot.players : []
-    setPlayers(mergePlayers(savedRegisteredPlayers, savedAuctionPlayers, snapshotPlayers, snapshotAuctionPlayers))
+
+    // 플레이어 관리 페이지에 등록된 선수가 0명이면,
+    // 예전 테스트/스냅샷/auction_players에 남아있는 선수가 오버레이에 다시 뜨지 않게 막습니다.
+    const activePlayers =
+      savedRegisteredPlayers.length > 0
+        ? mergePlayers(savedRegisteredPlayers, savedAuctionPlayers, snapshotPlayers, snapshotAuctionPlayers)
+        : []
+
+    setPlayers(activePlayers)
 
     const savedLandmarks =
       localStorage.getItem('auction_landmarks') ||
