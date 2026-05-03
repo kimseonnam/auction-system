@@ -485,6 +485,8 @@ export default function OverlayPage() {
 
   const lastPopupLogIdRef = useRef<string | null>(null)
   const popupTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const lastPopupModeRef = useRef<AuctionMode | null>(null)
+  const popupReadyRef = useRef(false)
 
   const loadLocalData = () => {
     const savedMode = localStorage.getItem('auction_mode')
@@ -570,12 +572,36 @@ export default function OverlayPage() {
 
   useEffect(() => {
     const activeLogs = auctionMode === 'landmark' ? landmarkLogs : logs
-    if (!activeLogs.length) return
-
     const latest = activeLogs[0]
 
-    if (!latest || lastPopupLogIdRef.current === latest.id) return
-    if (latest.action !== 'sold' && latest.action !== 'passed') return
+    // 페이지 전환/모드 전환 시 남아있는 마지막 낙찰/유찰 로그로 팝업이 다시 뜨는 문제 방지
+    if (lastPopupModeRef.current !== auctionMode) {
+      lastPopupModeRef.current = auctionMode
+      lastPopupLogIdRef.current = latest?.id || null
+      popupReadyRef.current = true
+
+      if (popupTimerRef.current) {
+        clearTimeout(popupTimerRef.current)
+      }
+
+      setPopup(null)
+      return
+    }
+
+    // 최초 로딩 시에도 기존 로그로 팝업이 뜨지 않게 막기
+    if (!popupReadyRef.current) {
+      popupReadyRef.current = true
+      lastPopupLogIdRef.current = latest?.id || null
+      setPopup(null)
+      return
+    }
+
+    if (!latest) return
+    if (lastPopupLogIdRef.current === latest.id) return
+    if (latest.action !== 'sold' && latest.action !== 'passed') {
+      lastPopupLogIdRef.current = latest.id
+      return
+    }
 
     lastPopupLogIdRef.current = latest.id
 
