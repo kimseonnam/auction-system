@@ -783,9 +783,11 @@ const handleResetAllTeamPoints = () => {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => window.open('/overlay', '_blank')}>
-              OBS 화면 열기
-            </Button>
+            {isAdmin && (
+              <Button variant="outline" size="sm" onClick={() => window.open('/overlay', '_blank')}>
+                OBS 화면 열기
+              </Button>
+            )}
 
             <Button
               variant="outline"
