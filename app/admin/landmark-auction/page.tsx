@@ -761,20 +761,22 @@ export default function LandmarkAuctionPage() {
               </Button>
             </Link>
 
-            <Button variant="outline" size="sm" onClick={() => window.open('/overlay', '_blank')}>
-              OBS 화면 열기
-            </Button>
-
             {isAdmin && (
-              <Button variant="outline" size="sm" onClick={handleShuffleLandmarks}>
-                <Shuffle className="mr-1 h-4 w-4" />
-                랜덤 랜드마크 순서
-              </Button>
-            )}
+              <>
+                <Button variant="outline" size="sm" onClick={() => window.open('/overlay', '_blank')}>
+                  OBS 화면 열기
+                </Button>
 
-            <Button variant="outline" size="sm" onClick={openResultsPage}>
-              결과창
-            </Button>
+                <Button variant="outline" size="sm" onClick={handleShuffleLandmarks}>
+                  <Shuffle className="mr-1 h-4 w-4" />
+                  랜덤 랜드마크 순서
+                </Button>
+
+                <Button variant="outline" size="sm" onClick={openResultsPage}>
+                  결과창
+                </Button>
+              </>
+            )}
           </div>
         </div>
 
