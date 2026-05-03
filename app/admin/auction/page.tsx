@@ -52,6 +52,7 @@ type LocalAuctionLog = {
 
 type AuctionSnapshot = {
   players: LocalPlayer[]
+  auction_players?: LocalPlayer[]
   teams: LocalTeam[]
   auctionState: LocalAuctionState
   logs: LocalAuctionLog[]
@@ -129,6 +130,36 @@ export default function AuctionPage() {
 
   const isAdmin = role === 'admin'
 
+  const saveOverlaySync = (
+    nextPlayers: LocalPlayer[] = players,
+    nextTeams: LocalTeam[] = teams,
+    nextState: LocalAuctionState = auctionState,
+    nextLogs: LocalAuctionLog[] = logs
+  ) => {
+    const cleanPlayers = nextPlayers.map((player) => ({
+      ...player,
+      image_url: player.image_url || null,
+    }))
+
+    const snapshot: AuctionSnapshot = {
+      players: cleanPlayers,
+      auction_players: cleanPlayers,
+      teams: nextTeams,
+      auctionState: nextState,
+      logs: nextLogs,
+    }
+
+    localStorage.setItem('auction_mode', 'player')
+    localStorage.setItem('auction_players', JSON.stringify(cleanPlayers))
+    localStorage.setItem('auction_teams', JSON.stringify(nextTeams))
+    localStorage.setItem('auction_state', JSON.stringify(nextState))
+    localStorage.setItem('auction_logs', JSON.stringify(nextLogs))
+    localStorage.setItem('auction_snapshot', JSON.stringify(snapshot))
+
+    // 오버레이가 현재 선수/입찰 순서를 안정적으로 읽도록 맞춰줍니다.
+    localStorage.setItem('players', JSON.stringify(cleanPlayers))
+  }
+
   const openLandmarkAuction = () => {
     localStorage.setItem('auction_mode', 'landmark')
     window.open('/admin/landmark-auction', '_self')
@@ -154,6 +185,12 @@ export default function AuctionPage() {
     const savedPlayers = localStorage.getItem('auction_players')
     const loadedPlayers = savedPlayers ? JSON.parse(savedPlayers) : []
     setPlayers(loadedPlayers)
+    if (loadedPlayers.length > 0) {
+      localStorage.setItem('players', JSON.stringify(loadedPlayers))
+    }
+    if (loadedPlayers.length > 0) {
+      localStorage.setItem('players', JSON.stringify(loadedPlayers))
+    }
 
     const savedTeams = localStorage.getItem('auction_teams')
     if (savedTeams) {
@@ -213,12 +250,12 @@ useEffect(() => {
 
   const savePlayers = (nextPlayers: LocalPlayer[]) => {
     setPlayers(nextPlayers)
-    localStorage.setItem('auction_players', JSON.stringify(nextPlayers))
+    saveOverlaySync(nextPlayers, teams, auctionState, logs)
   }
 
   const saveTeams = (nextTeams: LocalTeam[]) => {
     setTeams(nextTeams)
-    localStorage.setItem('auction_teams', JSON.stringify(nextTeams))
+    saveOverlaySync(players, nextTeams, auctionState, logs)
   }
 
   const openPointPanel = () => {
@@ -284,6 +321,11 @@ useEffect(() => {
     // removed log, '팀 포인트 일괄 지급 완료')
   }
 
+useEffect(() => {
+  saveOverlaySync(players, teams, auctionState, logs)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [players, teams, auctionState, logs])
+
 const handleResetAllTeamPoints = () => {
   if (!isAdmin) return
   if (!confirm('모든 팀 포인트를 0으로 초기화할까요?')) return
@@ -307,12 +349,12 @@ const handleResetAllTeamPoints = () => {
 
   const saveAuctionState = (nextState: LocalAuctionState) => {
     setAuctionState(nextState)
-    localStorage.setItem('auction_state', JSON.stringify(nextState))
+    saveOverlaySync(players, teams, nextState, logs)
   }
 
   const clearAuctionLogs = () => {
     setLogs([])
-    localStorage.setItem('auction_logs', JSON.stringify([]))
+    saveOverlaySync(players, teams, auctionState, [])
   }
 
   const addLog = (action: string, message: string) => {
@@ -331,7 +373,7 @@ const handleResetAllTeamPoints = () => {
           ? [newLog, ...prevLogs].slice(0, 30)
           : [newLog]
 
-      localStorage.setItem('auction_logs', JSON.stringify(nextLogs))
+      saveOverlaySync(players, teams, auctionState, nextLogs)
       return nextLogs
     })
   }
@@ -369,9 +411,14 @@ const handleResetAllTeamPoints = () => {
     setLogs(snapshot.logs)
 
     localStorage.setItem('auction_players', JSON.stringify(snapshot.players))
+    localStorage.setItem('players', JSON.stringify(snapshot.players))
     localStorage.setItem('auction_teams', JSON.stringify(snapshot.teams))
     localStorage.setItem('auction_state', JSON.stringify(snapshot.auctionState))
     localStorage.setItem('auction_logs', JSON.stringify(snapshot.logs))
+    localStorage.setItem('auction_snapshot', JSON.stringify({
+      ...snapshot,
+      auction_players: snapshot.players,
+    }))
     localStorage.removeItem('auction_undo')
   }
 
