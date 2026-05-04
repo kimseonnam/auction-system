@@ -1209,10 +1209,7 @@ function ResultsOverlay({
 
   useEffect(() => {
     const readResultPage = () => {
-      const savedPage = Number(
-        localStorage.getItem('overlay_page') || '1'
-      )
-
+      const savedPage = Number(localStorage.getItem('overlay_page') || '1')
       const nextPage = Number.isFinite(savedPage)
         ? Math.min(Math.max(1, savedPage), maxPage)
         : 1
@@ -1223,18 +1220,12 @@ function ResultsOverlay({
     readResultPage()
 
     const handleStorageChange = (event: StorageEvent) => {
-      if (
-        event.key === 'overlay_page' ||
-        event.key === 'auction_mode'
-      ) {
+      if (event.key === 'overlay_page') {
         readResultPage()
       }
     }
 
     window.addEventListener('storage', handleStorageChange)
-
-    // 같은 브라우저/탭에서 버튼을 눌러도 OBS 화면이 바로 따라오게 하는 확인용입니다.
-    // 자동으로 페이지를 넘기지는 않고, 관리자 버튼이 저장한 페이지 번호만 읽습니다.
     const syncInterval = setInterval(readResultPage, 300)
 
     return () => {
@@ -1251,7 +1242,7 @@ function ResultsOverlay({
         team.landmarks?.includes(landmark.id)
     )
 
-  const ResultPlayerCard = ({
+  const ResultPlayerSlot = ({
     player,
   }: {
     player?: LocalPlayer
@@ -1260,14 +1251,13 @@ function ResultsOverlay({
 
     return (
       <div
-        className={`relative shrink-0 overflow-hidden rounded-md border bg-[#141414] ${
+        className={`relative h-[150px] min-w-0 overflow-hidden rounded-lg border bg-[#141414] ${
           player
             ? getRawIsCaptain(player)
               ? 'border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,0.55)]'
               : getTierBorderClass(player.tier)
             : 'border-[#333]'
         }`}
-        style={{ width: 180, height: 180 }}
       >
         {player && imageUrl ? (
           <img
@@ -1280,23 +1270,23 @@ function ResultsOverlay({
             {(player.name || '?')[0]}
           </div>
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#151515] text-[12px] font-black text-[#777]">
+          <div className="absolute inset-0 flex items-center justify-center bg-[#151515] text-[13px] font-black text-[#777]">
             미선택
           </div>
         )}
 
         {player && getRawIsCaptain(player) && (
-          <div className="absolute left-1 top-1 z-20 rounded bg-yellow-400 px-1.5 py-0.5 text-[9px] font-black leading-none text-black">
+          <div className="absolute left-1 top-1 z-20 rounded bg-yellow-400 px-1.5 py-0.5 text-[10px] font-black leading-none text-black">
             팀장
           </div>
         )}
 
         {player && (
           <>
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/90" />
-            <div className="absolute inset-x-0 bottom-0 z-20 bg-black/72 px-1 py-1 text-center">
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/10 to-black/92" />
+            <div className="absolute inset-x-0 bottom-0 z-20 bg-black/76 px-1.5 py-1.5 text-center">
               <p
-                className="truncate text-[30px] font-black leading-none text-white"
+                className="truncate text-[24px] font-black leading-none text-white"
                 style={{
                   textShadow:
                     '2px 2px 0 #000, -2px 2px 0 #000, 2px -2px 0 #000, -2px -2px 0 #000, 0 2px 0 #000, 2px 0 0 #000, 0 -2px 0 #000, -2px 0 0 #000',
@@ -1305,8 +1295,8 @@ function ResultsOverlay({
                 {player.name}
               </p>
 
-              <p className={`mt-0.5 text-[20px] font-black leading-none ${getTierColorClass(player.tier)}`}>
-                {getRawIsCaptain(player) ? '팀장' : player.tier}
+              <p className={`mt-1 text-[18px] font-black leading-none ${getTierColorClass(player.tier)}`}>
+                {getRawIsCaptain(player) ? '팀장' : player.tier || '-'}
               </p>
             </div>
           </>
@@ -1315,7 +1305,7 @@ function ResultsOverlay({
     )
   }
 
-  const TeamOnlyCard = ({
+  const TeamResultCard = ({
     team,
     teamNumber,
   }: {
@@ -1326,41 +1316,38 @@ function ResultsOverlay({
     const teamLandmarks = getTeamLandmarks(team)
 
     return (
-      <article className="relative min-h-0 overflow-hidden rounded-lg border border-[#333] bg-[#101010]/95 p-3 shadow-[inset_0_0_24px_rgba(255,255,255,0.025)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(239,68,68,0.13),transparent_38%)]" />
+      <article className="relative min-h-0 overflow-hidden rounded-2xl border border-[#333] bg-[#101010]/95 p-4 shadow-[inset_0_0_26px_rgba(255,255,255,0.025)]">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(239,68,68,0.18),transparent_40%)]" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-red-900 via-red-500 to-red-900" />
 
         <div className="relative z-10 flex h-full flex-col">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex min-w-0 items-center gap-2">
-              <h3 className="shrink-0 text-[30px] font-black leading-none">
-                {teamNumber}팀
-              </h3>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="shrink-0 text-[34px] font-black leading-none text-white">
+              {teamNumber}팀
+            </h3>
 
-              
-            </div>
-
-            <span className="rounded bg-primary px-3 py-1.5 text-[15px] font-black leading-none text-white">
+            <span className="rounded-lg bg-primary px-4 py-2 text-[18px] font-black leading-none text-white shadow-[0_0_18px_rgba(239,68,68,0.35)]">
               {team.points ?? 0}P
             </span>
           </div>
 
-          <div className="mb-2 flex min-h-0 flex-1 items-center justify-center gap-2 overflow-hidden">
+          <div className="grid min-h-0 flex-1 grid-cols-4 gap-2 overflow-hidden">
             {[0, 1, 2, 3].map((slotIndex) => (
-              <ResultPlayerCard
+              <ResultPlayerSlot
                 key={teamPlayers[slotIndex]?.id || `result-empty-${team.id}-${slotIndex}`}
                 player={teamPlayers[slotIndex]}
               />
             ))}
           </div>
 
-          <div className="h-[32px] shrink-0 overflow-hidden rounded border border-[#2d2d2d] bg-black/45 px-2 py-1.5">
-            <p className="truncate text-[20px] font-black">
+          <div className="mt-3 h-[42px] shrink-0 overflow-hidden rounded-lg border border-[#2d2d2d] bg-black/55 px-3 py-2">
+            <p className="truncate text-[20px] font-black leading-none text-white">
               <span className="">[랜드마크]</span>{' '}
               {teamLandmarks.length > 0
-              ? teamLandmarks
-                .map((l: any) => `${getLandmarkMapName(l)} - ${l.name}`)
-                .join(', ')
-            : '-'}
+                ? teamLandmarks
+                    .map((l: any) => `${getLandmarkMapName(l)} - ${l.name}`)
+                    .join(', ')
+                : '-'}
             </p>
           </div>
         </div>
@@ -1368,52 +1355,12 @@ function ResultsOverlay({
     )
   }
 
-  const BannerCard = () => (
-    <section className="relative min-h-0 overflow-hidden rounded-xl border border-red-500/35 bg-black/80 shadow-[0_0_35px_rgba(239,68,68,0.18)]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.26),transparent_54%),linear-gradient(135deg,rgba(255,255,255,0.07),transparent_35%,rgba(239,68,68,0.14))]" />
-      <div className="absolute inset-x-0 bottom-0 h-3 bg-gradient-to-r from-red-900 via-red-500 to-red-900" />
-
-      <div className="relative z-10 flex h-full flex-col items-center justify-center text-center">
-        <p className="text-[30px] font-black italic leading-none">
-          <span className="text-white"></span>{' '}
-          <span className="text-primary"></span>
-        </p>
-        <p
-          className="mt-3 text-[34px] font-black leading-none text-white"
-          style={{
-            textShadow:
-              '3px 3px 0 #000, -3px 3px 0 #000, 3px -3px 0 #000, -3px -3px 0 #000, 0 0 20px rgba(239,68,68,0.55)',
-          }}
-        >
-          결과표
-        </p>
-        <p className="mt-3 text-[13px] font-black tracking-[0.5em] text-[#aaa]">
-          
-        </p>
-        <p className="mt-2 text-[12px] font-bold text-[#777]">
-          페이지 {page} / {maxPage}
-        </p>
-      </div>
-    </section>
-  )
-
-  const orderedItems = [
-    pageTeams[0],
-    pageTeams[1],
-    pageTeams[2],
-    pageTeams[3],
-    pageTeams[4],
-    pageTeams[5],
-    pageTeams[6],
-    pageTeams[7],
-  ]
-
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[#020204] p-3 text-white">
+    <main className="relative h-screen w-screen overflow-hidden bg-[#020204] p-6 text-white">
       <style jsx global>{`
         .result-only-bg {
           background:
-            radial-gradient(circle at top center, rgba(239, 68, 68, 0.16), transparent 28%),
+            radial-gradient(circle at top center, rgba(239, 68, 68, 0.2), transparent 28%),
             radial-gradient(circle at bottom right, rgba(239, 68, 68, 0.14), transparent 30%),
             linear-gradient(135deg, #050505 0%, #08080c 48%, #120305 100%);
         }
@@ -1421,60 +1368,30 @@ function ResultsOverlay({
 
       <div className="result-only-bg absolute inset-0" />
       <div className="pointer-events-none absolute inset-0 opacity-[0.12] [background-image:linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:42px_42px]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[120px] bg-gradient-to-b from-red-950/45 to-transparent" />
 
-      <div className="relative z-10 grid h-full grid-cols-3 grid-rows-3 gap-3">
-        {orderedItems[0] ? (
-          <TeamOnlyCard team={orderedItems[0]} teamNumber={pageStartNumber} />
-        ) : (
-          <div />
-        )}
+      <div className="relative z-10 flex h-full flex-col">
+        <section className="grid min-h-0 flex-1 grid-cols-4 grid-rows-2 gap-4">
+          {Array.from({ length: teamsPerPage }).map((_, index) => {
+            const team = pageTeams[index]
 
-        {orderedItems[1] ? (
-          <TeamOnlyCard team={orderedItems[1]} teamNumber={pageStartNumber + 1} />
-        ) : (
-          <div />
-        )}
-
-        {orderedItems[2] ? (
-          <TeamOnlyCard team={orderedItems[2]} teamNumber={pageStartNumber + 2} />
-        ) : (
-          <div />
-        )}
-
-        {orderedItems[3] ? (
-          <TeamOnlyCard team={orderedItems[3]} teamNumber={pageStartNumber + 3} />
-        ) : (
-          <div />
-        )}
-
-        <BannerCard />
-
-        {orderedItems[4] ? (
-          <TeamOnlyCard team={orderedItems[4]} teamNumber={pageStartNumber + 4} />
-        ) : (
-          <div />
-        )}
-
-        {orderedItems[5] ? (
-          <TeamOnlyCard team={orderedItems[5]} teamNumber={pageStartNumber + 5} />
-        ) : (
-          <div />
-        )}
-
-        {orderedItems[6] ? (
-          <TeamOnlyCard team={orderedItems[6]} teamNumber={pageStartNumber + 6} />
-        ) : (
-          <div />
-        )}
-
-        {orderedItems[7] ? (
-          <TeamOnlyCard team={orderedItems[7]} teamNumber={pageStartNumber + 7} />
-        ) : (
-          <div />
-        )}
+            return team ? (
+              <TeamResultCard
+                key={team.id}
+                team={team}
+                teamNumber={pageStartNumber + index}
+              />
+            ) : (
+              <div
+                key={`result-empty-team-${index}`}
+                className="rounded-2xl border border-[#222] bg-black/35"
+              />
+            )
+          })}
+        </section>
 
         {pageTeams.length === 0 && (
-          <div className="col-span-3 row-span-3 flex items-center justify-center text-4xl font-black text-[#777]">
+          <div className="absolute inset-0 z-20 flex items-center justify-center text-5xl font-black text-[#777]">
             표시할 팀이 없습니다.
           </div>
         )}
