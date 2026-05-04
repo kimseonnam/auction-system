@@ -1,14 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ArrowLeft, Plus, Pencil, Trash2, X, Upload } from 'lucide-react'
+import { supabase } from '@/lib/supabase/client'
 
 const TIERS = ['A', 'B', 'C', 'D'] as const
 const FILTER_TIERS = ['ALL', ...TIERS] as const
 
+type Tier = (typeof TIERS)[number]
 type TierFilter = (typeof FILTER_TIERS)[number]
 
 const DETAIL_TIERS = [
@@ -21,7 +23,6 @@ const DETAIL_TIERS = [
   '7티어',
   '8티어',
   '9티어',
-  '10티어',
   '물젖통',
 ]
 
@@ -34,7 +35,7 @@ type LocalTeam = {
 type LocalPlayer = {
   id: string
   name: string
-  tier: string
+  tier: Tier
   detail_tier: string
   available_days: string
   bio: string
@@ -52,29 +53,6 @@ const createDefaultTeams = (): LocalTeam[] =>
     points: 0,
   }))
 
-const loadTeams = (): LocalTeam[] => {
-  const savedTeams = localStorage.getItem('auction_teams')
-
-  if (savedTeams) {
-    try {
-      const parsedTeams = JSON.parse(savedTeams)
-      if (Array.isArray(parsedTeams) && parsedTeams.length > 0) {
-        return parsedTeams
-      }
-    } catch {
-      // 기본 팀 생성으로 처리
-    }
-  }
-
-  const defaultTeams = createDefaultTeams()
-  localStorage.setItem('auction_teams', JSON.stringify(defaultTeams))
-  return defaultTeams
-}
-
-const saveTeams = (teams: LocalTeam[]) => {
-  localStorage.setItem('auction_teams', JSON.stringify(teams))
-}
-
 const getTeamNumber = (teamId?: string | null) => {
   if (!teamId) return null
   const match = teamId.match(/team-(\d+)/)
@@ -89,81 +67,19 @@ const sortTeamsByNumber = (teams: LocalTeam[]) => {
   })
 }
 
-const getNextCaptainTeamId = (players: LocalPlayer[], editId?: string) => {
-  const teams = sortTeamsByNumber(loadTeams())
-
-  const usedCaptainTeamIds = players
-    .filter((player) => player.is_captain && player.team_id && player.id !== editId)
-    .map((player) => player.team_id)
-
-  const emptyTeam = teams.find((team) => !usedCaptainTeamIds.includes(team.id))
-
-  return emptyTeam?.id || null
-}
-
-const resetOldCaptainTeamNameIfNeeded = (
-  teams: LocalTeam[],
-  oldTeamId?: string | null,
-  players: LocalPlayer[] = [],
-  editId?: string
-) => {
-  if (!oldTeamId) return teams
-
-  const stillUsedByOtherCaptain = players.some(
-    (player) =>
-      player.id !== editId &&
-      player.is_captain &&
-      player.team_id === oldTeamId
-  )
-
-  if (stillUsedByOtherCaptain) return teams
-
-  const teamNumber = getTeamNumber(oldTeamId)
-
-  return teams.map((team) =>
-    team.id === oldTeamId
-      ? {
-          ...team,
-          name: teamNumber ? `TEAM ${teamNumber}` : team.name,
-        }
-      : team
-  )
-}
-
-const updateCaptainTeamName = ({
-  teamId,
-  captainName,
-  oldTeamId,
-  players,
-  editId,
-}: {
-  teamId?: string | null
-  captainName: string
-  oldTeamId?: string | null
-  players: LocalPlayer[]
-  editId?: string
-}) => {
-  let teams = loadTeams()
-
-  if (oldTeamId && oldTeamId !== teamId) {
-    teams = resetOldCaptainTeamNameIfNeeded(teams, oldTeamId, players, editId)
-  }
-
-  if (teamId) {
-    teams = teams.map((team) =>
-      team.id === teamId
-        ? {
-            ...team,
-            name: captainName,
-          }
-        : team
-    )
-  } else if (oldTeamId) {
-    teams = resetOldCaptainTeamNameIfNeeded(teams, oldTeamId, players, editId)
-  }
-
-  saveTeams(teams)
-}
+const normalizePlayer = (player: any): LocalPlayer => ({
+  id: String(player.id),
+  name: String(player.name || ''),
+  tier: TIERS.includes(player.tier) ? player.tier : 'A',
+  detail_tier: String(player.detail_tier || '1티어'),
+  available_days: String(player.available_days || ''),
+  bio: String(player.bio || ''),
+  image_url: player.image_url || null,
+  team_id: player.team_id || null,
+  bid_amount: Number(player.bid_amount || 0),
+  is_passed: Boolean(player.is_passed),
+  is_captain: Boolean(player.is_captain),
+})
 
 const compressImageToDataUrl = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -203,28 +119,111 @@ const compressImageToDataUrl = (file: File): Promise<string> => {
 
 export default function PlayersManagePage() {
   const [players, setPlayers] = useState<LocalPlayer[]>([])
+  const [teams, setTeams] = useState<LocalTeam[]>([])
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<LocalPlayer | null>(null)
   const [tierFilter, setTierFilter] = useState<TierFilter>('ALL')
+  const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    loadTeams()
+  const loadData = useCallback(async () => {
+    setLoading(true)
 
-    const saved = localStorage.getItem('auction_players')
+    const [playersResult, teamsResult] = await Promise.all([
+      supabase.from('players').select('*').order('id', { ascending: true }),
+      supabase.from('teams').select('*').order('id', { ascending: true }),
+    ])
 
-    if (saved) {
-      try {
-        setPlayers(JSON.parse(saved))
-      } catch (error) {
-        console.error('플레이어 데이터를 불러오지 못했습니다:', error)
-        setPlayers([])
-      }
+    if (playersResult.error) {
+      console.error('플레이어 불러오기 실패:', playersResult.error)
+      alert('플레이어 데이터를 불러오지 못했습니다.')
+    } else {
+      setPlayers((playersResult.data || []).map(normalizePlayer))
     }
+
+    if (teamsResult.error) {
+      console.error('팀 불러오기 실패:', teamsResult.error)
+      setTeams(createDefaultTeams())
+    } else if (teamsResult.data && teamsResult.data.length > 0) {
+      setTeams(sortTeamsByNumber(teamsResult.data as LocalTeam[]))
+    } else {
+      const defaultTeams = createDefaultTeams()
+      setTeams(defaultTeams)
+      await supabase.from('teams').upsert(defaultTeams, { onConflict: 'id' })
+    }
+
+    setLoading(false)
   }, [])
 
-  const savePlayers = (nextPlayers: LocalPlayer[]) => {
-    setPlayers(nextPlayers)
-    localStorage.setItem('auction_players', JSON.stringify(nextPlayers))
+  useEffect(() => {
+    loadData()
+
+    const channel = supabase
+      .channel('players-manage-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadData)
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [loadData])
+
+  const getNextCaptainTeamId = (currentPlayers: LocalPlayer[], editId?: string) => {
+    const sortedTeams = sortTeamsByNumber(teams.length > 0 ? teams : createDefaultTeams())
+
+    const usedCaptainTeamIds = currentPlayers
+      .filter((player) => player.is_captain && player.team_id && player.id !== editId)
+      .map((player) => player.team_id)
+
+    const emptyTeam = sortedTeams.find((team) => !usedCaptainTeamIds.includes(team.id))
+    return emptyTeam?.id || null
+  }
+
+  const resetOldCaptainTeamNameIfNeeded = async (
+    oldTeamId?: string | null,
+    currentPlayers: LocalPlayer[] = [],
+    editId?: string
+  ) => {
+    if (!oldTeamId) return
+
+    const stillUsedByOtherCaptain = currentPlayers.some(
+      (player) =>
+        player.id !== editId &&
+        player.is_captain &&
+        player.team_id === oldTeamId
+    )
+
+    if (stillUsedByOtherCaptain) return
+
+    const teamNumber = getTeamNumber(oldTeamId)
+    const nextName = teamNumber ? `TEAM ${teamNumber}` : undefined
+    if (!nextName) return
+
+    await supabase.from('teams').update({ name: nextName }).eq('id', oldTeamId)
+  }
+
+  const updateCaptainTeamName = async ({
+    teamId,
+    captainName,
+    oldTeamId,
+    currentPlayers,
+    editId,
+  }: {
+    teamId?: string | null
+    captainName: string
+    oldTeamId?: string | null
+    currentPlayers: LocalPlayer[]
+    editId?: string
+  }) => {
+    if (oldTeamId && oldTeamId !== teamId) {
+      await resetOldCaptainTeamNameIfNeeded(oldTeamId, currentPlayers, editId)
+    }
+
+    if (teamId) {
+      await supabase.from('teams').update({ name: captainName }).eq('id', teamId)
+    } else if (oldTeamId) {
+      await resetOldCaptainTeamNameIfNeeded(oldTeamId, currentPlayers, editId)
+    }
   }
 
   const filteredPlayers =
@@ -232,7 +231,7 @@ export default function PlayersManagePage() {
       ? players
       : players.filter((player) => player.tier === tierFilter)
 
-  const handleDeleteAll = () => {
+  const handleDeleteAll = async () => {
     if (players.length === 0) {
       alert('삭제할 플레이어가 없습니다.')
       return
@@ -242,79 +241,98 @@ export default function PlayersManagePage() {
       return
     }
 
-    const resetTeams = createDefaultTeams()
-    saveTeams(resetTeams)
-    savePlayers([])
+    const defaultTeams = createDefaultTeams()
 
-    localStorage.setItem('auction_logs', JSON.stringify([]))
-    localStorage.setItem(
-      'auction_state',
-      JSON.stringify({
-        current_player_id: null,
-        current_bid: 0,
-        current_bidder_team_id: null,
-        timer_remaining: 15,
-        status: 'ready',
-      })
-    )
+    const [deletePlayersResult, resetTeamsResult] = await Promise.all([
+      supabase.from('players').delete().neq('id', ''),
+      supabase.from('teams').upsert(defaultTeams, { onConflict: 'id' }),
+      supabase.from('auction_logs').delete().neq('id', ''),
+      supabase
+        .from('auction_state')
+        .update({
+          current_player_id: null,
+          current_bid: 0,
+          current_bidder_team_id: null,
+          timer_remaining: 15,
+          status: 'ready',
+        })
+        .eq('id', 'main'),
+    ])
+
+    if (deletePlayersResult.error || resetTeamsResult.error) {
+      console.error(deletePlayersResult.error || resetTeamsResult.error)
+      alert('전체 삭제 중 오류가 발생했습니다.')
+      return
+    }
 
     setTierFilter('ALL')
+    await loadData()
   }
 
-  const handleDelete = (player: LocalPlayer) => {
+  const handleDelete = async (player: LocalPlayer) => {
     if (!confirm(`${player.name}을(를) 삭제하시겠습니까?`)) return
 
     const nextPlayers = players.filter((p) => p.id !== player.id)
 
+    const { error } = await supabase.from('players').delete().eq('id', player.id)
+
+    if (error) {
+      console.error(error)
+      alert('삭제 중 오류가 발생했습니다.')
+      return
+    }
+
     if (player.is_captain && player.team_id) {
-      updateCaptainTeamName({
+      await updateCaptainTeamName({
         teamId: null,
         captainName: player.name,
         oldTeamId: player.team_id,
-        players: nextPlayers,
+        currentPlayers: nextPlayers,
         editId: player.id,
       })
     }
 
-    savePlayers(nextPlayers)
+    await loadData()
   }
 
-  const handleSavePlayer = (playerData: Omit<LocalPlayer, 'id'>, editId?: string) => {
+  const handleSavePlayer = async (playerData: Omit<LocalPlayer, 'id'>, editId?: string) => {
     if (editId) {
       const oldPlayer = players.find((player) => player.id === editId)
-      let updatedPlayer: LocalPlayer | null = null
 
-      const nextPlayers = players.map((player) => {
-        if (player.id !== editId) return player
+      const nextTeamId = playerData.is_captain
+        ? oldPlayer?.team_id || getNextCaptainTeamId(players, editId)
+        : null
 
-        const nextTeamId = playerData.is_captain
-          ? player.team_id || getNextCaptainTeamId(players, editId)
-          : null
-
-        updatedPlayer = {
-          ...player,
-          ...playerData,
-          team_id: nextTeamId,
-          bid_amount: playerData.is_captain ? 0 : playerData.bid_amount,
-          is_passed: playerData.is_captain ? false : playerData.is_passed,
-        }
-
-        return updatedPlayer
-      })
-
-      if (updatedPlayer !== null) {
-        const fixedPlayer: LocalPlayer = updatedPlayer
-
-        updateCaptainTeamName({
-          teamId: fixedPlayer.is_captain ? fixedPlayer.team_id : null,
-          captainName: fixedPlayer.name,
-          oldTeamId: oldPlayer?.team_id,
-          players: nextPlayers,
-          editId,
-        })
+      const updatedPlayer: LocalPlayer = {
+        id: editId,
+        ...playerData,
+        team_id: nextTeamId,
+        bid_amount: playerData.is_captain ? 0 : playerData.bid_amount,
+        is_passed: playerData.is_captain ? false : playerData.is_passed,
       }
 
-      savePlayers(nextPlayers)
+      const { error } = await supabase
+        .from('players')
+        .update(updatedPlayer)
+        .eq('id', editId)
+
+      if (error) {
+        console.error(error)
+        alert('플레이어 수정 중 오류가 발생했습니다. Supabase players 테이블에 bio 컬럼이 있는지 확인해주세요.')
+        return
+      }
+
+      const nextPlayers = players.map((player) =>
+        player.id === editId ? updatedPlayer : player
+      )
+
+      await updateCaptainTeamName({
+        teamId: updatedPlayer.is_captain ? updatedPlayer.team_id : null,
+        captainName: updatedPlayer.name,
+        oldTeamId: oldPlayer?.team_id,
+        currentPlayers: nextPlayers,
+        editId,
+      })
     } else {
       const newPlayerId = crypto.randomUUID()
       const nextTeamId = playerData.is_captain ? getNextCaptainTeamId(players) : null
@@ -327,22 +345,29 @@ export default function PlayersManagePage() {
         is_passed: playerData.is_captain ? false : playerData.is_passed,
       }
 
+      const { error } = await supabase.from('players').insert(newPlayer)
+
+      if (error) {
+        console.error(error)
+        alert('플레이어 추가 중 오류가 발생했습니다. Supabase players 테이블에 bio 컬럼이 있는지 확인해주세요.')
+        return
+      }
+
       const nextPlayers = [...players, newPlayer]
 
       if (newPlayer.is_captain) {
-        updateCaptainTeamName({
+        await updateCaptainTeamName({
           teamId: newPlayer.team_id,
           captainName: newPlayer.name,
-          players: nextPlayers,
+          currentPlayers: nextPlayers,
           editId: newPlayer.id,
         })
       }
-
-      savePlayers(nextPlayers)
     }
 
     setShowAddModal(false)
     setEditingPlayer(null)
+    await loadData()
   }
 
   return (
@@ -368,13 +393,13 @@ export default function PlayersManagePage() {
             <Button
               variant="destructive"
               onClick={handleDeleteAll}
-              disabled={players.length === 0}
+              disabled={players.length === 0 || loading}
             >
               <Trash2 className="w-4 h-4 mr-2" />
               전체 삭제
             </Button>
 
-            <Button onClick={() => setShowAddModal(true)}>
+            <Button onClick={() => setShowAddModal(true)} disabled={loading}>
               <Plus className="w-4 h-4 mr-2" />
               플레이어 추가
             </Button>
@@ -537,7 +562,9 @@ export default function PlayersManagePage() {
                 {filteredPlayers.length === 0 && (
                   <tr>
                     <td colSpan={9} className="p-8 text-center text-muted-foreground">
-                      {tierFilter === 'ALL'
+                      {loading
+                        ? '플레이어를 불러오는 중입니다'
+                        : tierFilter === 'ALL'
                         ? '등록된 플레이어가 없습니다'
                         : `${tierFilter} 티어 플레이어가 없습니다`}
                     </td>
@@ -566,13 +593,13 @@ export default function PlayersManagePage() {
 interface PlayerModalProps {
   player: LocalPlayer | null
   onClose: () => void
-  onSave: (playerData: Omit<LocalPlayer, 'id'>, editId?: string) => void
+  onSave: (playerData: Omit<LocalPlayer, 'id'>, editId?: string) => Promise<void>
 }
 
 function PlayerModal({ player, onClose, onSave }: PlayerModalProps) {
   const [loading, setLoading] = useState(false)
   const [name, setName] = useState(player?.name || '')
-  const [tier, setTier] = useState(player?.tier || 'A')
+  const [tier, setTier] = useState<Tier>(player?.tier || 'A')
   const [detailTier, setDetailTier] = useState(player?.detail_tier || '1티어')
   const [availableDays, setAvailableDays] = useState(player?.available_days || '')
   const [imagePreview, setImagePreview] = useState<string | null>(
@@ -594,7 +621,7 @@ function PlayerModal({ player, onClose, onSave }: PlayerModalProps) {
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!name.trim()) return
@@ -615,7 +642,7 @@ function PlayerModal({ player, onClose, onSave }: PlayerModalProps) {
     }
 
     try {
-      onSave(playerData, player?.id)
+      await onSave(playerData, player?.id)
     } finally {
       setLoading(false)
     }

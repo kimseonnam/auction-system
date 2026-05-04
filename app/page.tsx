@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input'
 
 type AuctionRole = 'admin' | 'participant'
 
-const ADMIN_CODE = '1234'
-const PARTICIPANT_CODE = '0000'
+const ADMIN_CODE = 'ksn0724'
+const PARTICIPANT_CODE = 'm0724'
 
 export default function HomePage() {
   const [code, setCode] = useState('')

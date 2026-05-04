@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { supabase } from '@/lib/supabase/client'
 
 type LocalSettings = {
   name: string
@@ -488,7 +489,7 @@ export default function OverlayPage() {
   const lastPopupModeRef = useRef<AuctionMode | null>(null)
   const popupReadyRef = useRef(false)
 
-  const loadLocalData = () => {
+  const readLocalModeAndSettings = () => {
     const savedMode = localStorage.getItem('auction_mode')
     setAuctionMode(
       savedMode === 'landmark'
@@ -500,74 +501,105 @@ export default function OverlayPage() {
 
     const savedSettings = localStorage.getItem('auction_settings')
     setSettings(safeJsonParse<LocalSettings>(savedSettings, DEFAULT_SETTINGS))
+  }
 
-    const snapshot =
-      safeJsonParse<AuctionSnapshot>(localStorage.getItem('auction_snapshot'), {}) ||
-      safeJsonParse<AuctionSnapshot>(localStorage.getItem('auctionSnapshot'), {}) ||
-      {}
+  const loadOverlayData = async () => {
+    readLocalModeAndSettings()
 
-    const savedTeams = localStorage.getItem('auction_teams')
-    const loadedTeams = normalizeTeams(safeJsonParse<LocalTeam[]>(savedTeams, []))
-    const snapshotTeams = normalizeTeams(Array.isArray(snapshot.teams) ? snapshot.teams : [])
-    setTeams(loadedTeams.length > 0 ? loadedTeams : snapshotTeams)
+    const [playersResult, teamsResult, auctionStateResult, logsResult, landmarksResult, landmarkStateResult] =
+      await Promise.all([
+        supabase.from('players').select('*').order('id', { ascending: true }),
+        supabase.from('teams').select('*').order('id', { ascending: true }),
+        supabase.from('auction_state').select('*').eq('id', 'main').maybeSingle(),
+        supabase
+          .from('auction_logs')
+          .select('*')
+          .in('action', ['bid', 'sold', 'passed'])
+          .order('created_at', { ascending: false })
+          .limit(30),
+        supabase.from('landmarks').select('*').order('id', { ascending: true }),
+        supabase.from('landmark_auction_state').select('*').eq('id', 'main').maybeSingle(),
+      ])
 
-    const savedAuctionPlayers = safeJsonParse<LocalPlayer[]>(localStorage.getItem('auction_players'), [])
-    const savedRegisteredPlayers = safeJsonParse<LocalPlayer[]>(localStorage.getItem('players'), [])
-    const snapshotAuctionPlayers = Array.isArray(snapshot.auction_players) ? snapshot.auction_players : []
-    const snapshotPlayers = Array.isArray(snapshot.players) ? snapshot.players : []
+    if (playersResult.error) console.error('overlay players load error:', playersResult.error)
+    if (teamsResult.error) console.error('overlay teams load error:', teamsResult.error)
+    if (auctionStateResult.error) console.error('overlay auction_state load error:', auctionStateResult.error)
+    if (logsResult.error) console.error('overlay auction_logs load error:', logsResult.error)
+    if (landmarksResult.error) console.error('overlay landmarks load error:', landmarksResult.error)
+    if (landmarkStateResult.error) console.error('overlay landmark_auction_state load error:', landmarkStateResult.error)
 
-    // 플레이어 관리 페이지에 등록된 선수가 0명이면,
-    // 예전 테스트/스냅샷/auction_players에 남아있는 선수가 오버레이에 다시 뜨지 않게 막습니다.
-    const activePlayers =
-      savedRegisteredPlayers.length > 0
-        ? mergePlayers(savedRegisteredPlayers, savedAuctionPlayers, snapshotPlayers, snapshotAuctionPlayers)
-        : []
+    const loadedPlayers = mergePlayers(((playersResult.data || []) as LocalPlayer[]).map(normalizePlayer))
+    const loadedTeams = normalizeTeams((teamsResult.data || []) as LocalTeam[])
+    const loadedAuctionState = auctionStateResult.data
+      ? {
+          current_player_id: auctionStateResult.data.current_player_id ?? null,
+          current_bid: Number(auctionStateResult.data.current_bid ?? 0),
+          current_bidder_team_id: auctionStateResult.data.current_bidder_team_id ?? null,
+          timer_remaining: Number(auctionStateResult.data.timer_remaining ?? 15),
+          status:
+            auctionStateResult.data.status === 'running' ||
+            auctionStateResult.data.status === 'paused' ||
+            auctionStateResult.data.status === 'ready'
+              ? auctionStateResult.data.status
+              : 'ready',
+        }
+      : DEFAULT_AUCTION_STATE
 
-    setPlayers(activePlayers)
+    const loadedLandmarkState = landmarkStateResult.data
+      ? {
+          current_landmark_id: landmarkStateResult.data.current_landmark_id ?? null,
+          current_bid: Number(landmarkStateResult.data.current_bid ?? 0),
+          current_bidder_team_id: landmarkStateResult.data.current_bidder_team_id ?? null,
+          timer_remaining: Number(landmarkStateResult.data.timer_remaining ?? 15),
+          status:
+            landmarkStateResult.data.status === 'running' ||
+            landmarkStateResult.data.status === 'paused' ||
+            landmarkStateResult.data.status === 'ready'
+              ? landmarkStateResult.data.status
+              : 'ready',
+        }
+      : DEFAULT_LANDMARK_AUCTION_STATE
 
-    const savedLandmarks =
-      localStorage.getItem('auction_landmarks') ||
-      localStorage.getItem('landmarks') ||
-      localStorage.getItem('auction_landmark_items')
+    setTeams(loadedTeams)
+    setPlayers(loadedPlayers)
+    setAuctionState(loadedAuctionState)
+    setLogs((logsResult.data || []) as LocalAuctionLog[])
+    setLandmarks(normalizeLandmarks(landmarksResult.data || []))
+    setLandmarkAuctionState(loadedLandmarkState)
 
-    setLandmarks(
-      normalizeLandmarks(
-        savedLandmarks
-          ? safeJsonParse<unknown>(savedLandmarks, [])
-          : Array.isArray(snapshot.landmarks)
-          ? snapshot.landmarks
-          : []
-      )
-    )
-
-    const savedAuctionState = localStorage.getItem('auction_state')
-    setAuctionState(safeJsonParse<LocalAuctionState>(savedAuctionState, DEFAULT_AUCTION_STATE))
-
-    const savedLandmarkState = localStorage.getItem('landmark_auction_state')
-    setLandmarkAuctionState(
-      safeJsonParse<LandmarkAuctionState>(savedLandmarkState, DEFAULT_LANDMARK_AUCTION_STATE)
-    )
-
-    const savedLogs = localStorage.getItem('auction_logs')
-    setLogs(safeJsonParse<LocalAuctionLog[]>(savedLogs, []))
-
-    const savedLandmarkLogs = localStorage.getItem('landmark_auction_logs')
-    setLandmarkLogs(safeJsonParse<LocalAuctionLog[]>(savedLandmarkLogs, []))
+    // 현재 랜드마크 경매 로그 테이블을 아직 따로 만들지 않았기 때문에,
+    // 랜드마크 모드에서도 공용 auction_logs를 사용합니다.
+    setLandmarkLogs((logsResult.data || []) as LocalAuctionLog[])
   }
 
   useEffect(() => {
-    loadLocalData()
+    loadOverlayData()
 
-    const handleStorageChange = () => loadLocalData()
+    const handleStorageChange = () => readLocalModeAndSettings()
     window.addEventListener('storage', handleStorageChange)
 
-    const interval = setInterval(loadLocalData, 500)
+    const channel = supabase
+      .channel('overlay-auction-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, loadOverlayData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadOverlayData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, loadOverlayData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadOverlayData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, loadOverlayData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmark_auction_state' }, loadOverlayData)
+      .subscribe()
+
+    // Realtime이 늦거나 꺼져 있어도 OBS 화면이 따라오도록 1초마다 보정합니다.
+    const interval = setInterval(loadOverlayData, 1000)
+    const modeInterval = setInterval(readLocalModeAndSettings, 300)
 
     return () => {
       window.removeEventListener('storage', handleStorageChange)
+      supabase.removeChannel(channel)
       clearInterval(interval)
+      clearInterval(modeInterval)
       if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {

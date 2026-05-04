@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { supabase } from '@/lib/supabase/client'
 import {
   ArrowLeft,
   Play,
@@ -20,8 +21,8 @@ type LocalPlayer = {
   id: string
   name: string
   tier: string
-  detail_tier?: string
-  available_days?: string
+  detail_tier?: string | null
+  available_days?: string | null
   image_url: string | null
   team_id?: string | null
   bid_amount: number
@@ -33,6 +34,7 @@ type LocalTeam = {
   id: string
   name: string
   points: number
+  join_code?: string | null
 }
 
 type LocalAuctionState = {
@@ -50,18 +52,11 @@ type LocalAuctionLog = {
   created_at: string
 }
 
-type AuctionSnapshot = {
-  players: LocalPlayer[]
-  auction_players?: LocalPlayer[]
-  teams: LocalTeam[]
-  auctionState: LocalAuctionState
-  logs: LocalAuctionLog[]
-}
-
 type AuctionRole = 'admin' | 'participant'
 
 const DEFAULT_TIMER = 15
 const DEFAULT_POINTS = 0
+
 
 const createDefaultTeams = (): LocalTeam[] =>
   Array.from({ length: 16 }, (_, i) => ({
@@ -117,8 +112,23 @@ const syncCaptainTeamNames = (players: LocalPlayer[], teams: LocalTeam[]) => {
   })
 }
 
+const normalizeAuctionState = (value: any): LocalAuctionState => ({
+  current_player_id: value?.current_player_id ?? null,
+  current_bid: Number(value?.current_bid ?? 0),
+  current_bidder_team_id: value?.current_bidder_team_id ?? null,
+  timer_remaining: Number(value?.timer_remaining ?? DEFAULT_TIMER),
+  status:
+    value?.status === 'running' || value?.status === 'paused' || value?.status === 'ready'
+      ? value.status
+      : 'ready',
+})
+
 export default function AuctionPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const auctionStateRef = useRef<LocalAuctionState>(defaultAuctionState)
+  const playersRef = useRef<LocalPlayer[]>([])
+  const teamsRef = useRef<LocalTeam[]>([])
+  const logsRef = useRef<LocalAuctionLog[]>([])
 
   const [role, setRole] = useState<AuctionRole>('participant')
   const [teams, setTeams] = useState<LocalTeam[]>([])
@@ -127,37 +137,226 @@ export default function AuctionPage() {
   const [logs, setLogs] = useState<LocalAuctionLog[]>([])
   const [isPointPanelOpen, setIsPointPanelOpen] = useState(false)
   const [pointDrafts, setPointDrafts] = useState<Record<string, string>>({})
+  const [participantTeamId, setParticipantTeamId] = useState<string | null>(null)
+  const [joinCodeInput, setJoinCodeInput] = useState('')
+  const [joinCodeError, setJoinCodeError] = useState('')
 
   const isAdmin = role === 'admin'
+  const participantTeam = teams.find((team) => team.id === participantTeamId) || null
 
-  const saveOverlaySync = (
-    nextPlayers: LocalPlayer[] = players,
-    nextTeams: LocalTeam[] = teams,
-    nextState: LocalAuctionState = auctionState,
-    nextLogs: LocalAuctionLog[] = logs
-  ) => {
-    const cleanPlayers = nextPlayers.map((player) => ({
-      ...player,
-      image_url: player.image_url || null,
-    }))
+  useEffect(() => {
+    auctionStateRef.current = auctionState
+  }, [auctionState])
 
-    const snapshot: AuctionSnapshot = {
-      players: cleanPlayers,
-      auction_players: cleanPlayers,
-      teams: nextTeams,
-      auctionState: nextState,
-      logs: nextLogs,
+  useEffect(() => {
+    playersRef.current = players
+  }, [players])
+
+  useEffect(() => {
+    teamsRef.current = teams
+  }, [teams])
+
+  useEffect(() => {
+    logsRef.current = logs
+  }, [logs])
+
+  const saveLocalOverlaySnapshot = useCallback(
+    (
+      nextPlayers: LocalPlayer[],
+      nextTeams: LocalTeam[],
+      nextState: LocalAuctionState,
+      nextLogs: LocalAuctionLog[]
+    ) => {
+      const cleanPlayers = nextPlayers.map((player) => ({
+        ...player,
+        image_url: player.image_url || null,
+      }))
+
+      localStorage.setItem('auction_mode', 'player')
+      localStorage.setItem('auction_players', JSON.stringify(cleanPlayers))
+      localStorage.setItem('players', JSON.stringify(cleanPlayers))
+      localStorage.setItem('auction_teams', JSON.stringify(nextTeams))
+      localStorage.setItem('auction_state', JSON.stringify(nextState))
+      localStorage.setItem('auction_logs', JSON.stringify(nextLogs))
+      localStorage.setItem(
+        'auction_snapshot',
+        JSON.stringify({
+          players: cleanPlayers,
+          auction_players: cleanPlayers,
+          teams: nextTeams,
+          auctionState: nextState,
+          logs: nextLogs,
+        })
+      )
+    },
+    []
+  )
+
+  const loadAuctionData = useCallback(async () => {
+    const [playersResult, teamsResult, stateResult, logsResult] = await Promise.all([
+      supabase.from('players').select('*').order('id', { ascending: true }),
+      supabase.from('teams').select('*').order('id', { ascending: true }),
+      supabase.from('auction_state').select('*').eq('id', 'main').maybeSingle(),
+      supabase
+        .from('auction_logs')
+        .select('*')
+        .in('action', ['bid', 'sold', 'passed'])
+        .order('created_at', { ascending: false })
+        .limit(30),
+    ])
+
+
+    if (playersResult.error) console.error('players load error:', playersResult.error)
+    if (teamsResult.error) console.error('teams load error:', teamsResult.error)
+    if (stateResult.error) console.error('auction_state load error:', stateResult.error)
+    if (logsResult.error) console.error('auction_logs load error:', logsResult.error)
+
+    const loadedPlayers = (playersResult.data || []) as LocalPlayer[]
+    const loadedTeamsRaw = (teamsResult.data || []) as LocalTeam[]
+    const loadedTeams = syncCaptainTeamNames(
+      loadedPlayers,
+      loadedTeamsRaw.length > 0 ? loadedTeamsRaw : createDefaultTeams()
+    )
+    const loadedState = stateResult.data
+      ? normalizeAuctionState(stateResult.data)
+      : defaultAuctionState
+    const loadedLogs = (logsResult.data || []) as LocalAuctionLog[]
+
+    playersRef.current = loadedPlayers
+    teamsRef.current = loadedTeams
+    auctionStateRef.current = loadedState
+    logsRef.current = loadedLogs
+
+    setPlayers(loadedPlayers)
+    setTeams(loadedTeams)
+    setAuctionState(loadedState)
+    setLogs(loadedLogs)
+    saveLocalOverlaySnapshot(loadedPlayers, loadedTeams, loadedState, loadedLogs)
+  }, [saveLocalOverlaySnapshot])
+
+  useEffect(() => {
+    localStorage.setItem('auction_mode', 'player')
+
+    const savedRole = sessionStorage.getItem('auction_role')
+    setRole(savedRole === 'admin' || savedRole === 'participant' ? savedRole : 'participant')
+
+    const savedTeamId = sessionStorage.getItem('auction_participant_team_id')
+    if (savedTeamId) {
+      setParticipantTeamId(savedTeamId)
     }
 
-    localStorage.setItem('auction_mode', 'player')
-    localStorage.setItem('auction_players', JSON.stringify(cleanPlayers))
-    localStorage.setItem('auction_teams', JSON.stringify(nextTeams))
-    localStorage.setItem('auction_state', JSON.stringify(nextState))
-    localStorage.setItem('auction_logs', JSON.stringify(nextLogs))
-    localStorage.setItem('auction_snapshot', JSON.stringify(snapshot))
+    loadAuctionData()
 
-    // 오버레이가 현재 선수/입찰 순서를 안정적으로 읽도록 맞춰줍니다.
-    localStorage.setItem('players', JSON.stringify(cleanPlayers))
+    const channel = supabase
+      .channel('auction-page-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, loadAuctionData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadAuctionData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, loadAuctionData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadAuctionData)
+      .subscribe()
+
+    const pollingInterval = setInterval(loadAuctionData, 500)
+
+    return () => {
+      clearInterval(pollingInterval)
+      supabase.removeChannel(channel)
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [loadAuctionData])
+
+  const savePlayers = async (nextPlayers: LocalPlayer[]) => {
+    playersRef.current = nextPlayers
+    setPlayers(nextPlayers)
+    saveLocalOverlaySnapshot(nextPlayers, teams, auctionState, logs)
+
+    const { error } = await supabase.from('players').upsert(nextPlayers)
+    if (error) console.error('players save error:', error)
+  }
+
+  const saveTeams = async (nextTeams: LocalTeam[]) => {
+    const syncedTeams = syncCaptainTeamNames(playersRef.current, nextTeams)
+    teamsRef.current = syncedTeams
+    setTeams(syncedTeams)
+    saveLocalOverlaySnapshot(players, syncedTeams, auctionState, logs)
+
+    const { error } = await supabase.from('teams').upsert(syncedTeams)
+    if (error) console.error('teams save error:', error)
+  }
+
+  const saveAuctionState = async (nextState: LocalAuctionState) => {
+    auctionStateRef.current = nextState
+    setAuctionState(nextState)
+    saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, nextState, logsRef.current)
+
+    const { error } = await supabase
+      .from('auction_state')
+      .upsert({ id: 'main', ...nextState })
+
+    if (error) console.error('auction_state save error:', error)
+  }
+
+  const clearAuctionLogs = async () => {
+    setLogs([])
+    saveLocalOverlaySnapshot(players, teams, auctionState, [])
+
+    const { error } = await supabase
+      .from('auction_logs')
+      .delete()
+      .in('action', ['bid', 'sold', 'passed'])
+
+    if (error) console.error('auction_logs clear error:', error)
+  }
+
+  const addLog = async (action: string, message: string) => {
+    if (action !== 'bid' && action !== 'sold' && action !== 'passed') return
+
+    const newLog: LocalAuctionLog = {
+      id: crypto.randomUUID(),
+      action,
+      message,
+      created_at: new Date().toISOString(),
+    }
+
+    const nextLogs = action === 'bid' ? [newLog, ...logsRef.current].slice(0, 30) : [newLog]
+    logsRef.current = nextLogs
+    setLogs(nextLogs)
+    saveLocalOverlaySnapshot(players, teams, auctionState, nextLogs)
+
+    if (action !== 'bid') {
+      await supabase.from('auction_logs').delete().in('action', ['bid', 'sold', 'passed'])
+    }
+
+    const { error } = await supabase.from('auction_logs').insert(newLog)
+    if (error) console.error('auction_logs insert error:', error)
+  }
+
+  const handleParticipantLogin = () => {
+    if (isAdmin) return
+
+    const code = joinCodeInput.trim()
+    if (!code) {
+      setJoinCodeError('팀 코드를 입력해주세요.')
+      return
+    }
+
+    const matchedTeam = teams.find((team) => (team.join_code || '').trim() === code)
+
+    if (!matchedTeam) {
+      setJoinCodeError('일치하는 팀 코드가 없습니다.')
+      return
+    }
+
+    sessionStorage.setItem('auction_participant_team_id', matchedTeam.id)
+    setParticipantTeamId(matchedTeam.id)
+    setJoinCodeInput('')
+    setJoinCodeError('')
+  }
+
+  const handleParticipantLogout = () => {
+    sessionStorage.removeItem('auction_participant_team_id')
+    setParticipantTeamId(null)
+    setJoinCodeInput('')
+    setJoinCodeError('')
   }
 
   const openLandmarkAuction = () => {
@@ -169,94 +368,6 @@ export default function AuctionPage() {
   const currentPlayer = auctionPlayers.find((p) => p.id === auctionState.current_player_id)
   const currentBidderTeam = teams.find((t) => t.id === auctionState.current_bidder_team_id)
   const passedPlayers = auctionPlayers.filter((p) => p.is_passed)
-
-  useEffect(() => {
-    localStorage.setItem('auction_mode', 'player')
-
-    const savedRole = sessionStorage.getItem('auction_role')
-    if (savedRole === 'admin' || savedRole === 'participant') {
-      setRole(savedRole)
-    } else {
-      setRole('participant')
-    }
-  }, [])
-
-  useEffect(() => {
-    const savedPlayers = localStorage.getItem('auction_players')
-    const loadedPlayers = savedPlayers ? JSON.parse(savedPlayers) : []
-    setPlayers(loadedPlayers)
-    if (loadedPlayers.length > 0) {
-      localStorage.setItem('players', JSON.stringify(loadedPlayers))
-    }
-    if (loadedPlayers.length > 0) {
-      localStorage.setItem('players', JSON.stringify(loadedPlayers))
-    }
-
-    const savedTeams = localStorage.getItem('auction_teams')
-    if (savedTeams) {
-      const loadedTeams = JSON.parse(savedTeams)
-      const syncedTeams = syncCaptainTeamNames(loadedPlayers, loadedTeams)
-      setTeams(syncedTeams)
-      localStorage.setItem('auction_teams', JSON.stringify(syncedTeams))
-    } else {
-      const defaultTeams = syncCaptainTeamNames(loadedPlayers, createDefaultTeams())
-      setTeams(defaultTeams)
-      localStorage.setItem('auction_teams', JSON.stringify(defaultTeams))
-    }
-
-    const savedState = localStorage.getItem('auction_state')
-    setAuctionState(savedState ? JSON.parse(savedState) : defaultAuctionState)
-
-    const savedLogs = localStorage.getItem('auction_logs')
-    setLogs(savedLogs ? JSON.parse(savedLogs) : [])
-  }, [])
-
-useEffect(() => {
-  const syncAuctionData = () => {
-    localStorage.setItem('auction_mode', 'player')
-
-    const savedPlayers = localStorage.getItem('auction_players')
-    const loadedPlayers = savedPlayers ? JSON.parse(savedPlayers) : []
-    setPlayers(loadedPlayers)
-
-    const savedTeams = localStorage.getItem('auction_teams')
-    if (savedTeams) {
-      const loadedTeams = JSON.parse(savedTeams)
-      const syncedTeams = syncCaptainTeamNames(loadedPlayers, loadedTeams)
-      setTeams(syncedTeams)
-      localStorage.setItem('auction_teams', JSON.stringify(syncedTeams))
-    }
-
-    const savedState = localStorage.getItem('auction_state')
-    if (savedState) {
-      setAuctionState(JSON.parse(savedState))
-    }
-
-    const savedLogs = localStorage.getItem('auction_logs')
-    setLogs(savedLogs ? JSON.parse(savedLogs) : [])
-  }
-
-  // 0.5초마다 동기화
-  const interval = setInterval(syncAuctionData, 500)
-
-  // 다른 탭에서 변경 감지
-  window.addEventListener('storage', syncAuctionData)
-
-  return () => {
-    clearInterval(interval)
-    window.removeEventListener('storage', syncAuctionData)
-  }
-}, [])
-
-  const savePlayers = (nextPlayers: LocalPlayer[]) => {
-    setPlayers(nextPlayers)
-    saveOverlaySync(nextPlayers, teams, auctionState, logs)
-  }
-
-  const saveTeams = (nextTeams: LocalTeam[]) => {
-    setTeams(nextTeams)
-    saveOverlaySync(players, nextTeams, auctionState, logs)
-  }
 
   const openPointPanel = () => {
     const drafts = teams.reduce<Record<string, string>>((acc, team) => {
@@ -275,7 +386,7 @@ useEffect(() => {
     }))
   }
 
-  const handleApplyTeamPoint = (team: LocalTeam) => {
+  const handleApplyTeamPoint = async (team: LocalTeam) => {
     if (!isAdmin) return
 
     const rawValue = pointDrafts[team.id] ?? '0'
@@ -286,16 +397,14 @@ useEffect(() => {
       t.id === team.id ? { ...t, points: safeValue } : t
     )
 
-    saveTeams(nextTeams)
+    await saveTeams(nextTeams)
     setPointDrafts((prev) => ({
       ...prev,
       [team.id]: String(safeValue),
     }))
-
-    // removed log, `${team.name} 포인트 ${safeValue}P 지급`)
   }
 
-  const handleApplyAllTeamPoints = () => {
+  const handleApplyAllTeamPoints = async () => {
     if (!isAdmin) return
 
     const nextTeams = teams.map((team) => {
@@ -309,7 +418,7 @@ useEffect(() => {
       }
     })
 
-    saveTeams(nextTeams)
+    await saveTeams(nextTeams)
 
     setPointDrafts(
       nextTeams.reduce<Record<string, string>>((acc, team) => {
@@ -317,83 +426,43 @@ useEffect(() => {
         return acc
       }, {})
     )
-
-    // removed log, '팀 포인트 일괄 지급 완료')
   }
 
-useEffect(() => {
-  saveOverlaySync(players, teams, auctionState, logs)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [players, teams, auctionState, logs])
+  const handleResetAllTeamPoints = async () => {
+    if (!isAdmin) return
+    if (!confirm('모든 팀 포인트를 0으로 초기화할까요?')) return
 
-const handleResetAllTeamPoints = () => {
-  if (!isAdmin) return
-  if (!confirm('모든 팀 포인트를 0으로 초기화할까요?')) return
+    const resetTeams = teams.map((team) => ({
+      ...team,
+      points: 0,
+    }))
 
-  const resetTeams = teams.map((team) => ({
-    ...team,
-    points: 0,
-  }))
+    await saveTeams(resetTeams)
 
-  saveTeams(resetTeams)
-
-  setPointDrafts(
-    resetTeams.reduce<Record<string, string>>((acc, team) => {
-      acc[team.id] = '0'
-      return acc
-    }, {})
-  )
-
-  // removed log, '모든 팀 포인트 초기화')
-}
-
-  const saveAuctionState = (nextState: LocalAuctionState) => {
-    setAuctionState(nextState)
-    saveOverlaySync(players, teams, nextState, logs)
-  }
-
-  const clearAuctionLogs = () => {
-    setLogs([])
-    saveOverlaySync(players, teams, auctionState, [])
-  }
-
-  const addLog = (action: string, message: string) => {
-    if (action !== 'bid' && action !== 'sold' && action !== 'passed') return
-
-    const newLog: LocalAuctionLog = {
-      id: crypto.randomUUID(),
-      action,
-      message,
-      created_at: new Date().toISOString(),
-    }
-
-    setLogs((prevLogs) => {
-      const nextLogs =
-        action === 'bid'
-          ? [newLog, ...prevLogs].slice(0, 30)
-          : [newLog]
-
-      saveOverlaySync(players, teams, auctionState, nextLogs)
-      return nextLogs
-    })
+    setPointDrafts(
+      resetTeams.reduce<Record<string, string>>((acc, team) => {
+        acc[team.id] = '0'
+        return acc
+      }, {})
+    )
   }
 
   const saveSnapshot = () => {
-    const snapshot: AuctionSnapshot = {
-      // 이미지까지 되돌리기에 저장하면 localStorage 용량 초과가 날 수 있어서 이미지 제외 해야함...ㅠㅠ
-      players: players.map((player) => ({
-        ...player,
-        image_url: null,
-      })),
-      teams,
-      auctionState,
-      logs,
-    }
-
-    localStorage.setItem('auction_undo', JSON.stringify(snapshot))
+    localStorage.setItem(
+      'auction_undo',
+      JSON.stringify({
+        players: players.map((player) => ({
+          ...player,
+          image_url: null,
+        })),
+        teams,
+        auctionState,
+        logs,
+      })
+    )
   }
 
-  const handleUndo = () => {
+  const handleUndo = async () => {
     if (!isAdmin) return
 
     const saved = localStorage.getItem('auction_undo')
@@ -403,22 +472,18 @@ const handleResetAllTeamPoints = () => {
       return
     }
 
-    const snapshot: AuctionSnapshot = JSON.parse(saved)
+    const snapshot = JSON.parse(saved)
 
-    setPlayers(snapshot.players)
-    setTeams(snapshot.teams)
-    setAuctionState(snapshot.auctionState)
-    setLogs(snapshot.logs)
+    await savePlayers(snapshot.players)
+    await saveTeams(snapshot.teams)
+    await saveAuctionState(snapshot.auctionState)
 
-    localStorage.setItem('auction_players', JSON.stringify(snapshot.players))
-    localStorage.setItem('players', JSON.stringify(snapshot.players))
-    localStorage.setItem('auction_teams', JSON.stringify(snapshot.teams))
-    localStorage.setItem('auction_state', JSON.stringify(snapshot.auctionState))
-    localStorage.setItem('auction_logs', JSON.stringify(snapshot.logs))
-    localStorage.setItem('auction_snapshot', JSON.stringify({
-      ...snapshot,
-      auction_players: snapshot.players,
-    }))
+    await clearAuctionLogs()
+    if (Array.isArray(snapshot.logs) && snapshot.logs.length > 0) {
+      await supabase.from('auction_logs').insert(snapshot.logs)
+    }
+
+    setLogs(snapshot.logs || [])
     localStorage.removeItem('auction_undo')
   }
 
@@ -452,59 +517,70 @@ const handleResetAllTeamPoints = () => {
       timer_remaining: DEFAULT_TIMER,
       status: nextPlayer ? 'paused' : 'ready',
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auctionState.current_player_id, players, getNextPlayer])
 
-  const updateAuctionState = (updates: Partial<LocalAuctionState>) => {
-    saveAuctionState({
+  const updateAuctionState = async (updates: Partial<LocalAuctionState>) => {
+    await saveAuctionState({
       ...auctionState,
       ...updates,
     })
   }
 
   useEffect(() => {
-    if (!isAdmin) return
-    if (auctionState.status !== 'running') return
+    if (!isAdmin || auctionState.status !== 'running') {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+      return
+    }
 
-    if (timerRef.current) clearInterval(timerRef.current)
+    if (timerRef.current) return
 
-    timerRef.current = setInterval(() => {
-      setAuctionState((prev) => {
-        const nextTime = prev.timer_remaining - 1
+    timerRef.current = setInterval(async () => {
+      const prev = auctionStateRef.current
 
-        if (nextTime <= 0) {
-          clearInterval(timerRef.current!)
-
-          const nextState: LocalAuctionState = {
-            ...prev,
-            timer_remaining: 0,
-            status: 'paused',
-          }
-
-          localStorage.setItem('auction_state', JSON.stringify(nextState))
-
-          setTimeout(() => {
-            // removed log, '타이머 종료 - 낙찰 또는 유찰을 선택하세요')
-          }, 0)
-
-          return nextState
+      if (prev.status !== 'running') {
+        if (timerRef.current) {
+          clearInterval(timerRef.current)
+          timerRef.current = null
         }
+        return
+      }
 
-        const nextState: LocalAuctionState = {
-          ...prev,
-          timer_remaining: nextTime,
-        }
+      const nextTime = Math.max(0, prev.timer_remaining - 1)
+      const nextState: LocalAuctionState = {
+        ...prev,
+        timer_remaining: nextTime,
+        status: nextTime <= 0 ? 'paused' : 'running',
+      }
 
-        localStorage.setItem('auction_state', JSON.stringify(nextState))
-        return nextState
-      })
+      auctionStateRef.current = nextState
+      setAuctionState(nextState)
+      saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, nextState, logsRef.current)
+
+      const { error } = await supabase
+        .from('auction_state')
+        .upsert({ id: 'main', ...nextState })
+
+      if (error) console.error('timer save error:', error)
+
+      if (nextTime <= 0 && timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
     }, 1000)
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
     }
-  }, [auctionState.status, isAdmin])
+  }, [auctionState.status, isAdmin, saveLocalOverlaySnapshot])
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!isAdmin) return
 
     if (!currentPlayer || currentPlayer.is_captain) {
@@ -515,9 +591,9 @@ const handleResetAllTeamPoints = () => {
         return
       }
 
-      clearAuctionLogs()
+      await clearAuctionLogs()
 
-      saveAuctionState({
+      await saveAuctionState({
         current_player_id: firstPlayer.id,
         current_bid: 0,
         current_bidder_team_id: null,
@@ -527,15 +603,15 @@ const handleResetAllTeamPoints = () => {
       return
     }
 
-    updateAuctionState({ status: 'running' })
+    await updateAuctionState({ status: 'running' })
   }
 
-  const handlePause = () => {
+  const handlePause = async () => {
     if (!isAdmin) return
-    updateAuctionState({ status: 'paused' })
+    await updateAuctionState({ status: 'paused' })
   }
 
-  const handleSold = () => {
+  const handleSold = async () => {
     if (!isAdmin) return
     if (!currentPlayer || !auctionState.current_bidder_team_id) return
 
@@ -564,14 +640,14 @@ const handleResetAllTeamPoints = () => {
         : t
     )
 
-    savePlayers(nextPlayers)
-    saveTeams(nextTeams)
+    await savePlayers(nextPlayers)
+    await saveTeams(nextTeams)
 
-    addLog('sold', `[${currentPlayer.name} - ${team.name} ${auctionState.current_bid}포인트 낙찰]`)
+    await addLog('sold', `[${currentPlayer.name} - ${team.name} ${auctionState.current_bid}포인트 낙찰]`)
 
     const nextPlayer = nextPlayers.find(isAuctionTargetPlayer)
 
-    saveAuctionState({
+    await saveAuctionState({
       current_player_id: nextPlayer?.id || null,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -580,7 +656,7 @@ const handleResetAllTeamPoints = () => {
     })
   }
 
-  const handlePassed = () => {
+  const handlePassed = async () => {
     if (!isAdmin) return
     if (!currentPlayer) return
 
@@ -590,12 +666,12 @@ const handleResetAllTeamPoints = () => {
       p.id === currentPlayer.id ? { ...p, is_passed: true } : p
     )
 
-    savePlayers(nextPlayers)
-    addLog('passed', `[${currentPlayer.name} - 유찰]`)
+    await savePlayers(nextPlayers)
+    await addLog('passed', `[${currentPlayer.name} - 유찰]`)
 
     const nextPlayer = nextPlayers.find(isAuctionTargetPlayer)
 
-    saveAuctionState({
+    await saveAuctionState({
       current_player_id: nextPlayer?.id || null,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -604,22 +680,27 @@ const handleResetAllTeamPoints = () => {
     })
   }
 
-  const handleBid = (team: LocalTeam, amount: number) => {
+  const handleBid = async (team: LocalTeam, amount: number) => {
+    if (!isAdmin && participantTeamId !== team.id) {
+      alert('로그인한 본인 팀만 입찰할 수 있습니다.')
+      return
+    }
+
     if (amount <= auctionState.current_bid) return
     if (team.points < amount) return
 
-    // 입찰은 관리자/참가자 모두 가능
-    saveAuctionState({
+    const nextState: LocalAuctionState = {
       ...auctionState,
       current_bid: amount,
       current_bidder_team_id: team.id,
       timer_remaining: DEFAULT_TIMER,
-    })
+    }
 
-    addLog('bid', `[${team.name} - ${amount}포인트 입찰]`)
+    await saveAuctionState(nextState)
+    await addLog('bid', `[${team.name} - ${amount}포인트 입찰]`)
   }
 
-  const handlePrevPlayer = () => {
+  const handlePrevPlayer = async () => {
     if (!isAdmin) return
 
     const availablePlayers = getAvailablePlayers()
@@ -630,9 +711,9 @@ const handleResetAllTeamPoints = () => {
     const prevPlayer = availablePlayers[currentIndex - 1]
     if (!prevPlayer) return
 
-    clearAuctionLogs()
+    await clearAuctionLogs()
 
-    saveAuctionState({
+    await saveAuctionState({
       current_player_id: prevPlayer.id,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -641,15 +722,15 @@ const handleResetAllTeamPoints = () => {
     })
   }
 
-  const handleNextPlayer = () => {
+  const handleNextPlayer = async () => {
     if (!isAdmin) return
 
     const nextPlayer = getNextPlayer()
     if (!nextPlayer) return
 
-    clearAuctionLogs()
+    await clearAuctionLogs()
 
-    saveAuctionState({
+    await saveAuctionState({
       current_player_id: nextPlayer.id,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -658,13 +739,13 @@ const handleResetAllTeamPoints = () => {
     })
   }
 
-  const handleSelectPlayer = (player: LocalPlayer) => {
+  const handleSelectPlayer = async (player: LocalPlayer) => {
     if (!isAdmin) return
     if (player.is_captain) return
 
-    clearAuctionLogs()
+    await clearAuctionLogs()
 
-    saveAuctionState({
+    await saveAuctionState({
       current_player_id: player.id,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -673,7 +754,7 @@ const handleResetAllTeamPoints = () => {
     })
   }
 
-  const handleShufflePlayers = () => {
+  const handleShufflePlayers = async () => {
     if (!isAdmin) return
 
     const availablePlayers = getAvailablePlayers()
@@ -694,11 +775,10 @@ const handleResetAllTeamPoints = () => {
 
     const nextPlayers = [...shuffled, ...unavailablePlayers]
 
-    savePlayers(nextPlayers)
-    // removed log, '경매 순서 랜덤 완료')
+    await savePlayers(nextPlayers)
 
     if (shuffled[0]) {
-      saveAuctionState({
+      await saveAuctionState({
         current_player_id: shuffled[0].id,
         current_bid: 0,
         current_bidder_team_id: null,
@@ -708,7 +788,7 @@ const handleResetAllTeamPoints = () => {
     }
   }
 
-  const handleResetAll = () => {
+  const handleResetAll = async () => {
     if (!isAdmin) return
     if (!confirm('경매 기록을 전체 초기화할까요?')) return
 
@@ -729,12 +809,12 @@ const handleResetAllTeamPoints = () => {
       }))
     )
 
-    savePlayers(resetPlayers)
-    saveTeams(resetTeams)
+    await savePlayers(resetPlayers)
+    await saveTeams(resetTeams)
 
     const firstPlayer = resetPlayers.find(isAuctionTargetPlayer) || null
 
-    saveAuctionState({
+    await saveAuctionState({
       current_player_id: firstPlayer?.id || null,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -742,10 +822,10 @@ const handleResetAllTeamPoints = () => {
       status: 'ready',
     })
 
-    clearAuctionLogs()
+    await clearAuctionLogs()
   }
 
-  const handleRecoverPassed = (player: LocalPlayer) => {
+  const handleRecoverPassed = async (player: LocalPlayer) => {
     if (!isAdmin) return
 
     saveSnapshot()
@@ -754,8 +834,7 @@ const handleResetAllTeamPoints = () => {
       p.id === player.id ? { ...p, is_passed: false } : p
     )
 
-    savePlayers(nextPlayers)
-    // removed log, `${player.name} 유찰 복구`)
+    await savePlayers(nextPlayers)
   }
 
   const leftTeams = teams.slice(0, 8)
@@ -794,11 +873,11 @@ const handleResetAllTeamPoints = () => {
               size="sm"
               onClick={() => {
                 localStorage.setItem('auction_mode', 'landmark')
-              window.location.href = '/admin/landmark-auction'
-          }}
-              >
-               랜드마크 경매
-              </Button>
+                window.location.href = '/admin/landmark-auction'
+              }}
+            >
+              랜드마크 경매
+            </Button>
 
             {isAdmin && (
               <Button variant="outline" size="sm" onClick={openPointPanel}>
@@ -815,6 +894,53 @@ const handleResetAllTeamPoints = () => {
             )}
           </div>
         </div>
+
+        {!isAdmin && (
+          <section className="rounded-xl border border-border bg-card p-4">
+            {participantTeam ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-muted-foreground">현재 로그인된 팀</p>
+                  <p className="text-xl font-black text-primary">{participantTeam.name}</p>
+                  <p className="text-sm font-bold text-white">보유 포인트: {participantTeam.points}포인트</p>
+                </div>
+
+                <Button variant="outline" size="sm" onClick={handleParticipantLogout}>
+                  팀 코드 로그아웃
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-[260px] space-y-2">
+                  <label className="text-sm font-bold text-white">팀 코드 입력</label>
+                  <input
+                    value={joinCodeInput}
+                    onChange={(e) => {
+                      setJoinCodeInput(e.target.value)
+                      setJoinCodeError('')
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleParticipantLogin()
+                    }}
+                    placeholder="전달받은코드"
+                    className="w-full rounded border border-border bg-input px-3 py-2 text-sm font-bold"
+                  />
+                  {joinCodeError && (
+                    <p className="text-xs font-bold text-destructive">{joinCodeError}</p>
+                  )}
+                </div>
+
+                <Button onClick={handleParticipantLogin}>
+                  팀 입장
+                </Button>
+
+                <p className="text-sm text-muted-foreground">
+                  팀 코드를 입력해야 본인 팀으로만 입찰할 수 있습니다.
+                </p>
+              </div>
+            )}
+          </section>
+        )}
 
         {isAdmin && isPointPanelOpen && (
           <section className="rounded-xl border border-border bg-card p-5">
@@ -1086,7 +1212,9 @@ const handleResetAllTeamPoints = () => {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready'}
+                  disabled={auctionState.status === 'ready' || (!isAdmin && participantTeamId !== team.id)}
+                  canBid={isAdmin || participantTeamId === team.id}
+                  isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
               ))}
             </div>
@@ -1143,7 +1271,9 @@ const handleResetAllTeamPoints = () => {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready'}
+                  disabled={auctionState.status === 'ready' || (!isAdmin && participantTeamId !== team.id)}
+                  canBid={isAdmin || participantTeamId === team.id}
+                  isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
               ))}
             </div>
@@ -1161,6 +1291,8 @@ interface TeamBidCardProps {
   currentBid: number
   isCurrentBidder: boolean
   disabled: boolean
+  canBid: boolean
+  isParticipantLoggedIn: boolean
 }
 
 function TeamBidCard({
@@ -1170,10 +1302,22 @@ function TeamBidCard({
   currentBid,
   isCurrentBidder,
   disabled,
+  canBid,
+  isParticipantLoggedIn,
 }: TeamBidCardProps) {
   const [bidAmount, setBidAmount] = useState('')
 
   const handleCustomBid = () => {
+    if (!isParticipantLoggedIn) {
+      alert('먼저 팀 코드를 입력해주세요.')
+      return
+    }
+
+    if (!canBid) {
+      alert('본인 팀만 입찰할 수 있습니다.')
+      return
+    }
+
     const amount = parseInt(bidAmount)
 
     if (amount > currentBid && amount <= team.points) {
@@ -1217,18 +1361,18 @@ function TeamBidCard({
           type="number"
           value={bidAmount}
           onChange={(e) => setBidAmount(e.target.value)}
-          placeholder="입찰액"
+          placeholder={canBid ? '입찰액' : '본인 팀만 입찰'}
           className="min-w-0 flex-1 rounded border border-border bg-input px-3 py-2 text-sm"
-          disabled={disabled}
+          disabled={disabled || !canBid}
         />
 
         <Button
           size="sm"
           className="h-9 shrink-0"
           onClick={handleCustomBid}
-          disabled={disabled || !bidAmount}
+          disabled={disabled || !bidAmount || !canBid}
         >
-          입찰
+          {canBid ? '입찰' : '잠김'}
         </Button>
       </div>
     </div>
