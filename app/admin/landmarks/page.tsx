@@ -1,61 +1,166 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { supabase } from '@/lib/supabase/client'
 import { ArrowLeft, Plus, Pencil, Trash2, X, Map } from 'lucide-react'
 
 type LocalLandmark = {
   id: string
   map_name: string
   region: string
+  name: string
+  category: string
+  map: string
+  image_url?: string | null
+  team_id?: string | null
+  bid_amount?: number
+  is_passed?: boolean
 }
+
+const normalizeLandmark = (item: any): LocalLandmark => {
+  const mapName = item?.map_name || item?.category || item?.map || '랜드마크'
+  const region = item?.region || item?.name || '이름 없음'
+
+  return {
+    id: String(item?.id || crypto.randomUUID()),
+    map_name: String(mapName),
+    region: String(region),
+    name: String(region),
+    category: String(mapName),
+    map: String(mapName),
+    image_url: item?.image_url || null,
+    team_id: item?.team_id || null,
+    bid_amount: Number(item?.bid_amount || 0),
+    is_passed: Boolean(item?.is_passed),
+  }
+}
+
+const toSupabaseLandmark = (landmark: LocalLandmark) => ({
+  id: landmark.id,
+  name: landmark.region,
+  category: landmark.map_name,
+  map: landmark.map_name,
+  image_url: landmark.image_url || null,
+  team_id: landmark.team_id || null,
+  bid_amount: Number(landmark.bid_amount || 0),
+  is_passed: Boolean(landmark.is_passed),
+})
 
 export default function LandmarksManagePage() {
   const [landmarks, setLandmarks] = useState<LocalLandmark[]>([])
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingLandmark, setEditingLandmark] = useState<LocalLandmark | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const saved = localStorage.getItem('auction_landmarks')
-    if (saved) {
-      setLandmarks(JSON.parse(saved))
-    }
+  const syncLocalStorage = useCallback((nextLandmarks: LocalLandmark[]) => {
+    const overlayLandmarks = nextLandmarks.map((landmark) => ({
+      ...toSupabaseLandmark(landmark),
+      map_name: landmark.map_name,
+      region: landmark.region,
+    }))
+
+    localStorage.setItem('auction_landmarks', JSON.stringify(overlayLandmarks))
+    localStorage.setItem('landmarks', JSON.stringify(overlayLandmarks))
   }, [])
 
-  const saveLandmarks = (nextLandmarks: LocalLandmark[]) => {
-    setLandmarks(nextLandmarks)
-    localStorage.setItem('auction_landmarks', JSON.stringify(nextLandmarks))
-  }
+  const loadLandmarks = useCallback(async () => {
+    setLoading(true)
 
-  const handleDelete = (landmark: LocalLandmark) => {
+    const { data, error } = await supabase
+      .from('landmarks')
+      .select('*')
+      .order('category', { ascending: true })
+      .order('name', { ascending: true })
+
+    if (error) {
+      console.error('landmarks load error:', error)
+      setLoading(false)
+      return
+    }
+
+    const nextLandmarks = (data || []).map(normalizeLandmark)
+    setLandmarks(nextLandmarks)
+    syncLocalStorage(nextLandmarks)
+    setLoading(false)
+  }, [syncLocalStorage])
+
+  useEffect(() => {
+    loadLandmarks()
+
+    const channel = supabase
+      .channel('landmarks-manage-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, loadLandmarks)
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [loadLandmarks])
+
+  const handleDelete = async (landmark: LocalLandmark) => {
     if (!confirm(`${landmark.map_name} - ${landmark.region}을(를) 삭제하시겠습니까?`)) return
 
     const nextLandmarks = landmarks.filter((item) => item.id !== landmark.id)
-    saveLandmarks(nextLandmarks)
+    setLandmarks(nextLandmarks)
+    syncLocalStorage(nextLandmarks)
+
+    const { error } = await supabase
+      .from('landmarks')
+      .delete()
+      .eq('id', landmark.id)
+
+    if (error) {
+      console.error('landmark delete error:', error)
+      alert('삭제 중 오류가 발생했습니다.')
+      await loadLandmarks()
+    }
   }
 
-  const handleSaveLandmark = (
-    landmarkData: Omit<LocalLandmark, 'id'>,
+  const handleSaveLandmark = async (
+    landmarkData: Omit<LocalLandmark, 'id' | 'name' | 'category' | 'map'>,
     editId?: string
   ) => {
+    const nextLandmark: LocalLandmark = {
+      id: editId || crypto.randomUUID(),
+      map_name: landmarkData.map_name,
+      region: landmarkData.region,
+      name: landmarkData.region,
+      category: landmarkData.map_name,
+      map: landmarkData.map_name,
+      image_url: landmarkData.image_url || null,
+      team_id: editId ? editingLandmark?.team_id || null : null,
+      bid_amount: editId ? Number(editingLandmark?.bid_amount || 0) : 0,
+      is_passed: editId ? Boolean(editingLandmark?.is_passed) : false,
+    }
+
+    const { error } = await supabase
+      .from('landmarks')
+      .upsert(toSupabaseLandmark(nextLandmark))
+
+    if (error) {
+      console.error('landmark save error:', error)
+      alert('저장 중 오류가 발생했습니다.')
+      return
+    }
+
     if (editId) {
       const nextLandmarks = landmarks.map((item) =>
-        item.id === editId ? { ...item, ...landmarkData } : item
+        item.id === editId ? nextLandmark : item
       )
-      saveLandmarks(nextLandmarks)
+      setLandmarks(nextLandmarks)
+      syncLocalStorage(nextLandmarks)
     } else {
-      const newLandmark: LocalLandmark = {
-        id: crypto.randomUUID(),
-        ...landmarkData,
-      }
-
-      saveLandmarks([...landmarks, newLandmark])
+      const nextLandmarks = [...landmarks, nextLandmark]
+      setLandmarks(nextLandmarks)
+      syncLocalStorage(nextLandmarks)
     }
 
     setShowAddModal(false)
     setEditingLandmark(null)
+    await loadLandmarks()
   }
 
   const groupedLandmarks = landmarks.reduce((acc, landmark) => {
@@ -89,7 +194,11 @@ export default function LandmarksManagePage() {
           </Button>
         </div>
 
-        {Object.keys(groupedLandmarks).length > 0 ? (
+        {loading ? (
+          <div className="bg-card border border-border rounded-lg p-8 text-center">
+            <p className="text-muted-foreground">랜드마크를 불러오는 중...</p>
+          </div>
+        ) : Object.keys(groupedLandmarks).length > 0 ? (
           <div className="space-y-6">
             {Object.entries(groupedLandmarks).map(([mapName, mapLandmarks]) => (
               <div
@@ -110,7 +219,14 @@ export default function LandmarksManagePage() {
                       key={landmark.id}
                       className="flex items-center justify-between p-4 hover:bg-secondary/50"
                     >
-                      <span>{landmark.region}</span>
+                      <div>
+                        <span className="font-bold">{landmark.region}</span>
+                        {(landmark.team_id || landmark.is_passed) && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {landmark.team_id ? '낙찰됨' : '유찰됨'}
+                          </span>
+                        )}
+                      </div>
 
                       <div className="flex items-center gap-2">
                         <Button
@@ -167,7 +283,10 @@ interface LandmarkModalProps {
   landmark: LocalLandmark | null
   existingMaps: string[]
   onClose: () => void
-  onSave: (landmarkData: Omit<LocalLandmark, 'id'>, editId?: string) => void
+  onSave: (
+    landmarkData: Omit<LocalLandmark, 'id' | 'name' | 'category' | 'map'>,
+    editId?: string
+  ) => void
 }
 
 function LandmarkModal({
@@ -181,17 +300,21 @@ function LandmarkModal({
   const [region, setRegion] = useState(landmark?.region || '')
   const [useExistingMap, setUseExistingMap] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!mapName.trim() || !region.trim()) return
 
     setLoading(true)
 
-    onSave(
+    await onSave(
       {
         map_name: mapName.trim(),
         region: region.trim(),
+        image_url: landmark?.image_url || null,
+        team_id: landmark?.team_id || null,
+        bid_amount: landmark?.bid_amount || 0,
+        is_passed: landmark?.is_passed || false,
       },
       landmark?.id
     )

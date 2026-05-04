@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { supabase } from '@/lib/supabase/client'
 import {
   ArrowLeft,
   Play,
@@ -31,6 +32,7 @@ type LocalTeam = {
   id: string
   name: string
   points: number
+  join_code?: string | null
   landmarks?: string[]
 }
 
@@ -70,17 +72,6 @@ const createDefaultTeams = (): LocalTeam[] =>
     landmarks: [],
   }))
 
-function safeJsonParse<T>(value: string | null, fallback: T): T {
-  if (!value) return fallback
-
-  try {
-    const parsed = JSON.parse(value)
-    return parsed ?? fallback
-  } catch {
-    return fallback
-  }
-}
-
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? value : []
 }
@@ -92,6 +83,7 @@ function normalizeTeams(value: unknown): LocalTeam[] {
     id: typeof team?.id === 'string' ? team.id : `team-${index + 1}`,
     name: typeof team?.name === 'string' ? team.name : `TEAM ${index + 1}`,
     points: Number.isFinite(Number(team?.points)) ? Number(team.points) : 0,
+    join_code: typeof team?.join_code === 'string' ? team.join_code : null,
     landmarks: Array.isArray(team?.landmarks) ? team.landmarks.filter((id: unknown) => typeof id === 'string') : [],
   }))
 }
@@ -101,7 +93,6 @@ function normalizeLandmarks(value: unknown): LocalLandmark[] {
   const flatItems: any[] = []
 
   const pushChild = (child: any, category: string, childIndex: number) => {
-    // child가 문자열이면 그대로 지역명으로 사용
     if (typeof child === 'string') {
       flatItems.push({
         id: `${category}-${childIndex + 1}`,
@@ -120,7 +111,6 @@ function normalizeLandmarks(value: unknown): LocalLandmark[] {
     })
   }
 
-  // 1) [{ name: '에란겔', landmarks: [...] }] 같은 배열 구조
   if (Array.isArray(rawValue)) {
     rawValue.forEach((item, groupIndex) => {
       const children =
@@ -149,13 +139,11 @@ function normalizeLandmarks(value: unknown): LocalLandmark[] {
           pushChild(child, String(category), childIndex)
         })
       } else {
-        // 이미 평평한 랜드마크 배열인 경우
         flatItems.push(item)
       }
     })
   }
 
-  // 2) { 에란겔: [...] } 같은 객체 구조
   if (!Array.isArray(rawValue) && rawValue && typeof rawValue === 'object') {
     Object.entries(rawValue).forEach(([category, items]) => {
       if (Array.isArray(items)) {
@@ -198,24 +186,6 @@ function normalizeLandmarks(value: unknown): LocalLandmark[] {
       landmark?.label ||
       landmark?.name ||
       landmark?.title ||
-      landmark?.landmark ||
-      landmark?.landmark_title ||
-      landmark?.landmarkTitle ||
-      landmark?.area ||
-      landmark?.area_name ||
-      landmark?.areaName ||
-      landmark?.region ||
-      landmark?.region_name ||
-      landmark?.regionName ||
-      landmark?.location ||
-      landmark?.location_name ||
-      landmark?.locationName ||
-      landmark?.place ||
-      landmark?.place_name ||
-      landmark?.placeName ||
-      landmark?.spot ||
-      landmark?.spot_name ||
-      landmark?.spotName ||
       landmark?.value ||
       landmark?.text ||
       landmark?.content ||
@@ -226,7 +196,6 @@ function normalizeLandmarks(value: unknown): LocalLandmark[] {
       `랜드마크 ${index + 1}`
 
     return {
-      ...landmark,
       id: typeof landmark?.id === 'string' ? landmark.id : `landmark-${index + 1}`,
       name: String(name),
       image_url: landmark?.image_url || landmark?.image || landmark?.imageUrl || null,
@@ -263,116 +232,200 @@ function normalizeState(value: unknown): LandmarkAuctionState {
   }
 }
 
-function normalizeLogs(value: unknown): AuctionLog[] {
-  return asArray<any>(value)
-    .filter((log) => log?.action === 'bid' || log?.action === 'sold' || log?.action === 'passed')
-    .map((log) => ({
-      id: typeof log.id === 'string' ? log.id : crypto.randomUUID(),
-      action: log.action,
-      message: typeof log.message === 'string' ? log.message : '',
-      created_at: typeof log.created_at === 'string' ? log.created_at : new Date().toISOString(),
-    }))
-}
-
 const getLandmarkImage = (landmark?: LocalLandmark | null) =>
   landmark?.image_url || landmark?.image || null
 
 const isAuctionTargetLandmark = (landmark: LocalLandmark) =>
   !landmark.team_id && !landmark.is_passed
 
+const makeLandmarkPayload = (landmark: LocalLandmark) => ({
+  id: landmark.id,
+  name: landmark.name,
+  image_url: landmark.image_url || landmark.image || null,
+  team_id: landmark.team_id || null,
+  bid_amount: Number(landmark.bid_amount || 0),
+  is_passed: Boolean(landmark.is_passed),
+  category: landmark.category || landmark.map || '랜드마크',
+  map: landmark.map || landmark.category || '랜드마크',
+})
+
+const makeTeamPayload = (team: LocalTeam) => ({
+  id: team.id,
+  name: team.name,
+  points: Number(team.points || 0),
+  join_code: team.join_code || null,
+})
+
 export default function LandmarkAuctionPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const auctionStateRef = useRef<LandmarkAuctionState>(defaultAuctionState)
+  const landmarksRef = useRef<LocalLandmark[]>([])
+  const teamsRef = useRef<LocalTeam[]>([])
+  const logsRef = useRef<AuctionLog[]>([])
 
   const [role, setRole] = useState<AuctionRole>('participant')
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [landmarks, setLandmarks] = useState<LocalLandmark[]>([])
   const [auctionState, setAuctionState] = useState<LandmarkAuctionState>(defaultAuctionState)
   const [logs, setLogs] = useState<AuctionLog[]>([])
+  const [joinedTeamId, setJoinedTeamId] = useState<string | null>(null)
+  const [teamCodeInput, setTeamCodeInput] = useState('')
 
   const isAdmin = role === 'admin'
 
-  const safeTeams = Array.isArray(teams) ? teams : []
-  const safeLandmarks = Array.isArray(landmarks) ? landmarks : []
+  useEffect(() => {
+    auctionStateRef.current = auctionState
+  }, [auctionState])
 
-  const currentLandmark = safeLandmarks.find(
-    (landmark) => landmark.id === auctionState.current_landmark_id
-  )
-  const currentBidderTeam = safeTeams.find(
-    (team) => team.id === auctionState.current_bidder_team_id
-  )
-  const passedLandmarks = safeLandmarks.filter((landmark) => landmark.is_passed)
+  useEffect(() => {
+    landmarksRef.current = landmarks
+  }, [landmarks])
 
-  const loadLocalData = useCallback(() => {
+  useEffect(() => {
+    teamsRef.current = teams
+  }, [teams])
+
+  useEffect(() => {
+    logsRef.current = logs
+  }, [logs])
+
+  const saveLocalOverlaySnapshot = useCallback(
+    (
+      nextTeams: LocalTeam[],
+      nextLandmarks: LocalLandmark[],
+      nextState: LandmarkAuctionState,
+      nextLogs: AuctionLog[]
+    ) => {
+      localStorage.setItem('auction_mode', 'landmark')
+      localStorage.setItem('auction_teams', JSON.stringify(nextTeams))
+      localStorage.setItem('auction_landmarks', JSON.stringify(nextLandmarks))
+      localStorage.setItem('landmark_auction_state', JSON.stringify(nextState))
+      localStorage.setItem('landmark_auction_logs', JSON.stringify(nextLogs))
+      localStorage.setItem(
+        'auction_snapshot',
+        JSON.stringify({
+          teams: nextTeams,
+          landmarks: nextLandmarks,
+          created_at: new Date().toISOString(),
+        })
+      )
+    },
+    []
+  )
+
+  const loadAuctionData = useCallback(async () => {
+    localStorage.setItem('auction_mode', 'landmark')
+
+    const [teamsResult, landmarksResult, stateResult, logsResult] = await Promise.all([
+      supabase.from('teams').select('*').order('id', { ascending: true }),
+      supabase.from('landmarks').select('*').order('id', { ascending: true }),
+      supabase.from('landmark_auction_state').select('*').eq('id', 'main').maybeSingle(),
+      supabase
+        .from('auction_logs')
+        .select('*')
+        .in('action', ['bid', 'sold', 'passed'])
+        .order('created_at', { ascending: false })
+        .limit(30),
+    ])
+
+    if (teamsResult.error) console.error('landmark teams load error:', teamsResult.error)
+    if (landmarksResult.error) console.error('landmarks load error:', landmarksResult.error)
+    if (stateResult.error) console.error('landmark_auction_state load error:', stateResult.error)
+    if (logsResult.error) console.error('landmark logs load error:', logsResult.error)
+
+    const loadedTeamsRaw = normalizeTeams(teamsResult.data || [])
+    const loadedLandmarks = normalizeLandmarks(landmarksResult.data || [])
+    const loadedTeams = loadedTeamsRaw.length > 0 ? loadedTeamsRaw : createDefaultTeams()
+    const loadedTeamsWithLandmarks = loadedTeams.map((team) => ({
+      ...team,
+      landmarks: loadedLandmarks.filter((landmark) => landmark.team_id === team.id).map((landmark) => landmark.id),
+    }))
+    const loadedState = stateResult.data ? normalizeState(stateResult.data) : defaultAuctionState
+    const loadedLogs = ((logsResult.data || []) as AuctionLog[]).filter((log) =>
+      ['bid', 'sold', 'passed'].includes(log.action)
+    )
+
+    teamsRef.current = loadedTeamsWithLandmarks
+    landmarksRef.current = loadedLandmarks
+    auctionStateRef.current = loadedState
+    logsRef.current = loadedLogs
+
+    setTeams(loadedTeamsWithLandmarks)
+    setLandmarks(loadedLandmarks)
+    setAuctionState(loadedState)
+    setLogs(loadedLogs)
+    saveLocalOverlaySnapshot(loadedTeamsWithLandmarks, loadedLandmarks, loadedState, loadedLogs)
+  }, [saveLocalOverlaySnapshot])
+
+  useEffect(() => {
     const savedRole = sessionStorage.getItem('auction_role')
     setRole(savedRole === 'admin' || savedRole === 'participant' ? savedRole : 'participant')
 
-    localStorage.setItem('auction_mode', 'landmark')
+    const savedTeamId = sessionStorage.getItem('auction_team_id') || sessionStorage.getItem('team_id')
+    setJoinedTeamId(savedTeamId || null)
 
-    const loadedTeams = normalizeTeams(
-      safeJsonParse<unknown>(localStorage.getItem('auction_teams'), [])
-    )
+    loadAuctionData()
 
-    const finalTeams = loadedTeams.length > 0 ? loadedTeams : createDefaultTeams()
-    setTeams(finalTeams)
-    localStorage.setItem('auction_teams', JSON.stringify(finalTeams))
+    const channel = supabase
+      .channel('landmark-auction-page-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadAuctionData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, loadAuctionData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmark_auction_state' }, loadAuctionData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadAuctionData)
+      .subscribe()
 
-    const savedLandmarks =
-      localStorage.getItem('auction_landmarks') ||
-      localStorage.getItem('landmarks') ||
-      localStorage.getItem('auction_landmark_items')
-
-    const loadedLandmarks = normalizeLandmarks(safeJsonParse<unknown>(savedLandmarks, []))
-    setLandmarks(loadedLandmarks)
-    localStorage.setItem('auction_landmarks', JSON.stringify(loadedLandmarks))
-
-    const loadedState = normalizeState(
-      safeJsonParse<unknown>(localStorage.getItem('landmark_auction_state'), defaultAuctionState)
-    )
-    setAuctionState(loadedState)
-
-    const loadedLogs = normalizeLogs(
-      safeJsonParse<unknown>(localStorage.getItem('landmark_auction_logs'), [])
-    )
-    setLogs(loadedLogs)
-  }, [])
-
-  useEffect(() => {
-    loadLocalData()
-
-    const interval = setInterval(loadLocalData, 500)
-    window.addEventListener('storage', loadLocalData)
+    const pollingInterval = setInterval(loadAuctionData, 700)
 
     return () => {
-      clearInterval(interval)
-      window.removeEventListener('storage', loadLocalData)
+      clearInterval(pollingInterval)
+      supabase.removeChannel(channel)
       if (timerRef.current) clearInterval(timerRef.current)
     }
-  }, [loadLocalData])
+  }, [loadAuctionData])
 
-  const saveTeams = (nextTeams: LocalTeam[]) => {
+  const saveTeams = async (nextTeams: LocalTeam[]) => {
     const normalized = normalizeTeams(nextTeams)
+    teamsRef.current = normalized
     setTeams(normalized)
-    localStorage.setItem('auction_teams', JSON.stringify(normalized))
+    saveLocalOverlaySnapshot(normalized, landmarksRef.current, auctionStateRef.current, logsRef.current)
+
+    const { error } = await supabase.from('teams').upsert(normalized.map(makeTeamPayload))
+    if (error) console.error('landmark teams save error:', error)
   }
 
-  const saveLandmarks = (nextLandmarks: LocalLandmark[]) => {
+  const saveLandmarks = async (nextLandmarks: LocalLandmark[]) => {
     const normalized = normalizeLandmarks(nextLandmarks)
+    landmarksRef.current = normalized
     setLandmarks(normalized)
-    localStorage.setItem('auction_landmarks', JSON.stringify(normalized))
+    saveLocalOverlaySnapshot(teamsRef.current, normalized, auctionStateRef.current, logsRef.current)
+
+    const { error } = await supabase.from('landmarks').upsert(normalized.map(makeLandmarkPayload))
+    if (error) console.error('landmarks save error:', error)
   }
 
-  const saveAuctionState = (nextState: LandmarkAuctionState) => {
+  const saveAuctionState = async (nextState: LandmarkAuctionState) => {
     const normalized = normalizeState(nextState)
+    auctionStateRef.current = normalized
     setAuctionState(normalized)
-    localStorage.setItem('landmark_auction_state', JSON.stringify(normalized))
+    saveLocalOverlaySnapshot(teamsRef.current, landmarksRef.current, normalized, logsRef.current)
+
+    const { error } = await supabase
+      .from('landmark_auction_state')
+      .upsert({ id: 'main', ...normalized })
+
+    if (error) console.error('landmark_auction_state save error:', error)
   }
 
-  const clearAuctionLogs = () => {
+  const clearAuctionLogs = async () => {
+    logsRef.current = []
     setLogs([])
-    localStorage.setItem('landmark_auction_logs', JSON.stringify([]))
+    saveLocalOverlaySnapshot(teamsRef.current, landmarksRef.current, auctionStateRef.current, [])
+
+    const { error } = await supabase.from('auction_logs').delete().in('action', ['bid', 'sold', 'passed'])
+    if (error) console.error('landmark logs clear error:', error)
   }
 
-  const addLog = (action: string, message: string) => {
+  const addLog = async (action: string, message: string) => {
     if (action !== 'bid' && action !== 'sold' && action !== 'passed') return
 
     const newLog: AuctionLog = {
@@ -382,75 +435,123 @@ export default function LandmarkAuctionPage() {
       created_at: new Date().toISOString(),
     }
 
-    setLogs((prevLogs) => {
-      // 입찰은 누적 표시, 낙찰/유찰은 기존 로그를 전부 지우고 결과 1개만 표시
-      const nextLogs =
-        action === 'bid'
-          ? [newLog, ...normalizeLogs(prevLogs)].slice(0, 30)
-          : [newLog]
+    const nextLogs = action === 'bid' ? [newLog, ...logsRef.current].slice(0, 30) : [newLog]
+    logsRef.current = nextLogs
+    setLogs(nextLogs)
+    saveLocalOverlaySnapshot(teamsRef.current, landmarksRef.current, auctionStateRef.current, nextLogs)
 
-      localStorage.setItem('landmark_auction_logs', JSON.stringify(nextLogs))
-      return nextLogs
-    })
+    if (action !== 'bid') {
+      await supabase.from('auction_logs').delete().in('action', ['bid', 'sold', 'passed'])
+    }
+
+    const { error } = await supabase.from('auction_logs').insert(newLog)
+    if (error) console.error('landmark logs insert error:', error)
   }
 
+  const handleLoginTeam = () => {
+    const code = teamCodeInput.trim()
+    if (!code) return
+
+    const matchedTeam = teams.find((team) => team.join_code === code)
+    if (!matchedTeam) {
+      alert('팀 코드가 올바르지 않습니다.')
+      return
+    }
+
+    sessionStorage.setItem('auction_team_id', matchedTeam.id)
+    sessionStorage.setItem('team_id', matchedTeam.id)
+    setJoinedTeamId(matchedTeam.id)
+    setTeamCodeInput('')
+  }
+
+  const handleLogoutTeam = () => {
+    sessionStorage.removeItem('auction_team_id')
+    sessionStorage.removeItem('team_id')
+    setJoinedTeamId(null)
+  }
+
+  const safeTeams = Array.isArray(teams) ? teams : []
+  const safeLandmarks = Array.isArray(landmarks) ? landmarks : []
+
+  const joinedTeam = joinedTeamId ? safeTeams.find((team) => team.id === joinedTeamId) : null
+  const currentLandmark = safeLandmarks.find(
+    (landmark) => landmark.id === auctionState.current_landmark_id
+  )
+  const currentBidderTeam = safeTeams.find(
+    (team) => team.id === auctionState.current_bidder_team_id
+  )
+  const passedLandmarks = safeLandmarks.filter((landmark) => landmark.is_passed)
+
   const getAvailableLandmarks = useCallback(() => {
-    return safeLandmarks.filter(isAuctionTargetLandmark)
-  }, [safeLandmarks])
+    return landmarksRef.current.filter(isAuctionTargetLandmark)
+  }, [])
 
   const getNextLandmark = useCallback(() => {
     const availableLandmarks = getAvailableLandmarks()
     if (availableLandmarks.length === 0) return null
 
-    const currentIndex = currentLandmark
-      ? availableLandmarks.findIndex((landmark) => landmark.id === currentLandmark.id)
+    const currentId = auctionStateRef.current.current_landmark_id
+    const currentIndex = currentId
+      ? availableLandmarks.findIndex((landmark) => landmark.id === currentId)
       : -1
 
     return availableLandmarks[currentIndex + 1] || availableLandmarks[0]
-  }, [getAvailableLandmarks, currentLandmark])
+  }, [getAvailableLandmarks])
 
   useEffect(() => {
-    if (!isAdmin) return
-    if (auctionState.status !== 'running') return
+    if (!isAdmin || auctionState.status !== 'running') {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+      return
+    }
 
-    if (timerRef.current) clearInterval(timerRef.current)
+    if (timerRef.current) return
 
-    timerRef.current = setInterval(() => {
-      setAuctionState((prev) => {
-        const nextTime = prev.timer_remaining - 1
+    timerRef.current = setInterval(async () => {
+      const prev = auctionStateRef.current
 
-        if (nextTime <= 0) {
-          clearInterval(timerRef.current!)
-
-          const nextState: LandmarkAuctionState = {
-            ...prev,
-            timer_remaining: 0,
-            status: 'paused',
-          }
-
-          localStorage.setItem('landmark_auction_state', JSON.stringify(nextState))
-          return nextState
+      if (prev.status !== 'running') {
+        if (timerRef.current) {
+          clearInterval(timerRef.current)
+          timerRef.current = null
         }
+        return
+      }
 
-        const nextState: LandmarkAuctionState = {
-          ...prev,
-          timer_remaining: nextTime,
-        }
+      const nextTime = Math.max(0, prev.timer_remaining - 1)
+      const nextState: LandmarkAuctionState = {
+        ...prev,
+        timer_remaining: nextTime,
+        status: nextTime <= 0 ? 'paused' : 'running',
+      }
 
-        localStorage.setItem('landmark_auction_state', JSON.stringify(nextState))
-        return nextState
-      })
+      await saveAuctionState(nextState)
+
+      if (nextTime <= 0 && timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
     }, 1000)
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auctionState.status, isAdmin])
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!isAdmin) return
 
-    if (!currentLandmark) {
+    const current = landmarksRef.current.find(
+      (landmark) => landmark.id === auctionStateRef.current.current_landmark_id
+    )
+
+    if (!current) {
       const firstLandmark = getNextLandmark()
 
       if (!firstLandmark) {
@@ -458,9 +559,9 @@ export default function LandmarkAuctionPage() {
         return
       }
 
-      clearAuctionLogs()
+      await clearAuctionLogs()
 
-      saveAuctionState({
+      await saveAuctionState({
         current_landmark_id: firstLandmark.id,
         current_bid: 0,
         current_bidder_team_id: null,
@@ -471,70 +572,77 @@ export default function LandmarkAuctionPage() {
       return
     }
 
-    saveAuctionState({
-      ...auctionState,
+    await saveAuctionState({
+      ...auctionStateRef.current,
       status: 'running',
     })
   }
 
-  const handlePause = () => {
+  const handlePause = async () => {
     if (!isAdmin) return
-    saveAuctionState({
-      ...auctionState,
+    await saveAuctionState({
+      ...auctionStateRef.current,
       status: 'paused',
     })
   }
 
-  const handleBid = (team: LocalTeam, amount: number) => {
-    if (amount <= auctionState.current_bid) return
+  const handleBid = async (team: LocalTeam, amount: number) => {
+    if (!isAdmin && joinedTeamId !== team.id) return
+    const currentState = auctionStateRef.current
+    if (amount <= currentState.current_bid) return
     if (team.points < amount) return
 
-    saveAuctionState({
-      ...auctionState,
+    await saveAuctionState({
+      ...currentState,
       current_bid: amount,
       current_bidder_team_id: team.id,
       timer_remaining: DEFAULT_TIMER,
     })
 
-    addLog('bid', `[${team.name} - ${amount}포인트 입찰]`)
+    await addLog('bid', `[${team.name} - ${amount}포인트 입찰]`)
   }
 
-  const handleSold = () => {
+  const handleSold = async () => {
     if (!isAdmin) return
-    if (!currentLandmark || !auctionState.current_bidder_team_id) return
 
-    const team = safeTeams.find((t) => t.id === auctionState.current_bidder_team_id)
+    const currentState = auctionStateRef.current
+    const currentLandmark = landmarksRef.current.find(
+      (landmark) => landmark.id === currentState.current_landmark_id
+    )
+
+    if (!currentLandmark || !currentState.current_bidder_team_id) return
+
+    const team = teamsRef.current.find((t) => t.id === currentState.current_bidder_team_id)
     if (!team) return
 
-    const nextLandmarks = safeLandmarks.map((landmark) =>
+    const nextLandmarks = landmarksRef.current.map((landmark) =>
       landmark.id === currentLandmark.id
         ? {
             ...landmark,
             team_id: team.id,
-            bid_amount: auctionState.current_bid,
+            bid_amount: currentState.current_bid,
             is_passed: false,
           }
         : landmark
     )
 
-    const nextTeams = safeTeams.map((t) =>
+    const nextTeams = teamsRef.current.map((t) =>
       t.id === team.id
         ? {
             ...t,
-            points: Math.max(0, t.points - auctionState.current_bid),
+            points: Math.max(0, t.points - currentState.current_bid),
             landmarks: Array.from(new Set([...(t.landmarks || []), currentLandmark.id])),
           }
         : t
     )
 
-    saveLandmarks(nextLandmarks)
-    saveTeams(nextTeams)
-
-    addLog('sold', `[${currentLandmark.name} - ${team.name} ${auctionState.current_bid}포인트 낙찰]`)
+    await saveLandmarks(nextLandmarks)
+    await saveTeams(nextTeams)
+    await addLog('sold', `[${currentLandmark.name} - ${team.name} ${currentState.current_bid}포인트 낙찰]`)
 
     const nextLandmark = nextLandmarks.find(isAuctionTargetLandmark)
 
-    saveAuctionState({
+    await saveAuctionState({
       current_landmark_id: nextLandmark?.id || null,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -543,11 +651,16 @@ export default function LandmarkAuctionPage() {
     })
   }
 
-  const handlePassed = () => {
+  const handlePassed = async () => {
     if (!isAdmin) return
+
+    const currentState = auctionStateRef.current
+    const currentLandmark = landmarksRef.current.find(
+      (landmark) => landmark.id === currentState.current_landmark_id
+    )
     if (!currentLandmark) return
 
-    const nextLandmarks = safeLandmarks.map((landmark) =>
+    const nextLandmarks = landmarksRef.current.map((landmark) =>
       landmark.id === currentLandmark.id
         ? {
             ...landmark,
@@ -556,12 +669,12 @@ export default function LandmarkAuctionPage() {
         : landmark
     )
 
-    saveLandmarks(nextLandmarks)
-    addLog('passed', `[${currentLandmark.name} - 유찰]`)
+    await saveLandmarks(nextLandmarks)
+    await addLog('passed', `[${currentLandmark.name} - 유찰]`)
 
     const nextLandmark = nextLandmarks.find(isAuctionTargetLandmark)
 
-    saveAuctionState({
+    await saveAuctionState({
       current_landmark_id: nextLandmark?.id || null,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -570,13 +683,13 @@ export default function LandmarkAuctionPage() {
     })
   }
 
-  const handleSelectLandmark = (landmark: LocalLandmark) => {
+  const handleSelectLandmark = async (landmark: LocalLandmark) => {
     if (!isAdmin) return
     if (!isAuctionTargetLandmark(landmark)) return
 
-    clearAuctionLogs()
+    await clearAuctionLogs()
 
-    saveAuctionState({
+    await saveAuctionState({
       current_landmark_id: landmark.id,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -585,20 +698,21 @@ export default function LandmarkAuctionPage() {
     })
   }
 
-  const handlePrevLandmark = () => {
+  const handlePrevLandmark = async () => {
     if (!isAdmin) return
 
     const availableLandmarks = getAvailableLandmarks()
-    const currentIndex = currentLandmark
-      ? availableLandmarks.findIndex((landmark) => landmark.id === currentLandmark.id)
+    const currentId = auctionStateRef.current.current_landmark_id
+    const currentIndex = currentId
+      ? availableLandmarks.findIndex((landmark) => landmark.id === currentId)
       : 0
 
     const prevLandmark = availableLandmarks[currentIndex - 1]
     if (!prevLandmark) return
 
-    clearAuctionLogs()
+    await clearAuctionLogs()
 
-    saveAuctionState({
+    await saveAuctionState({
       current_landmark_id: prevLandmark.id,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -607,15 +721,15 @@ export default function LandmarkAuctionPage() {
     })
   }
 
-  const handleNextLandmark = () => {
+  const handleNextLandmark = async () => {
     if (!isAdmin) return
 
     const nextLandmark = getNextLandmark()
     if (!nextLandmark) return
 
-    clearAuctionLogs()
+    await clearAuctionLogs()
 
-    saveAuctionState({
+    await saveAuctionState({
       current_landmark_id: nextLandmark.id,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -624,11 +738,11 @@ export default function LandmarkAuctionPage() {
     })
   }
 
-  const handleShuffleLandmarks = () => {
+  const handleShuffleLandmarks = async () => {
     if (!isAdmin) return
 
     const availableLandmarks = getAvailableLandmarks()
-    const unavailableLandmarks = safeLandmarks.filter((landmark) => !isAuctionTargetLandmark(landmark))
+    const unavailableLandmarks = landmarksRef.current.filter((landmark) => !isAuctionTargetLandmark(landmark))
 
     if (availableLandmarks.length < 2) {
       alert('랜드마크가 2개 이상 있어야 섞을 수 있습니다.')
@@ -643,10 +757,10 @@ export default function LandmarkAuctionPage() {
 
     const nextLandmarks = [...shuffled, ...unavailableLandmarks]
 
-    saveLandmarks(nextLandmarks)
-    clearAuctionLogs()
+    await saveLandmarks(nextLandmarks)
+    await clearAuctionLogs()
 
-    saveAuctionState({
+    await saveAuctionState({
       current_landmark_id: shuffled[0].id,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -655,29 +769,23 @@ export default function LandmarkAuctionPage() {
     })
   }
 
-  const handleResetLandmarkAuction = () => {
+  const handleResetLandmarkAuction = async () => {
     if (!isAdmin) return
     if (!confirm('랜드마크 경매를 전체 초기화할까요?')) return
 
-    const resetLandmarks = safeLandmarks.map((landmark) => ({
+    const resetLandmarks = landmarksRef.current.map((landmark) => ({
       ...landmark,
       team_id: null,
       bid_amount: 0,
       is_passed: false,
     }))
 
-    const resetTeams = safeTeams.map((team) => ({
-      ...team,
-      landmarks: [],
-    }))
-
-    saveLandmarks(resetLandmarks)
-    saveTeams(resetTeams)
-    clearAuctionLogs()
+    await saveLandmarks(resetLandmarks)
+    await clearAuctionLogs()
 
     const firstLandmark = resetLandmarks.find(isAuctionTargetLandmark) || null
 
-    saveAuctionState({
+    await saveAuctionState({
       current_landmark_id: firstLandmark?.id || null,
       current_bid: 0,
       current_bidder_team_id: null,
@@ -686,10 +794,10 @@ export default function LandmarkAuctionPage() {
     })
   }
 
-  const handleRecoverPassed = (landmark: LocalLandmark) => {
+  const handleRecoverPassed = async (landmark: LocalLandmark) => {
     if (!isAdmin) return
 
-    const nextLandmarks = safeLandmarks.map((item) =>
+    const nextLandmarks = landmarksRef.current.map((item) =>
       item.id === landmark.id
         ? {
             ...item,
@@ -698,7 +806,7 @@ export default function LandmarkAuctionPage() {
         : item
     )
 
-    saveLandmarks(nextLandmarks)
+    await saveLandmarks(nextLandmarks)
   }
 
   const availableCount = safeLandmarks.filter(isAuctionTargetLandmark).length
@@ -706,22 +814,11 @@ export default function LandmarkAuctionPage() {
   const rightTeams = safeTeams.slice(8, 16)
 
   const openResultsPage = () => {
-    const savedAuctionPlayers = safeJsonParse<unknown>(
-      localStorage.getItem('auction_players'),
-      []
-    )
-    const savedRegisteredPlayers = safeJsonParse<unknown>(
-      localStorage.getItem('players'),
-      []
-    )
-
     localStorage.setItem(
       'auction_snapshot',
       JSON.stringify({
         teams: safeTeams,
         landmarks: safeLandmarks,
-        auction_players: savedAuctionPlayers,
-        players: savedRegisteredPlayers,
         created_at: new Date().toISOString(),
       })
     )
@@ -779,6 +876,40 @@ export default function LandmarkAuctionPage() {
             )}
           </div>
         </div>
+
+
+        {!isAdmin && (
+          <section className="rounded-xl border border-border bg-card p-4">
+            {joinedTeam ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-muted-foreground">입장 완료</p>
+                  <p className="text-xl font-black text-primary">{joinedTeam.name}만 입찰할 수 있습니다.</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleLogoutTeam}>
+                  팀 코드 다시 입력
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-[220px]">
+                  <p className="text-sm text-muted-foreground">팀장 코드 입력</p>
+                  <p className="text-lg font-black">코드를 입력해야 해당 팀으로 입찰할 수 있습니다.</p>
+                </div>
+                <input
+                  value={teamCodeInput}
+                  onChange={(e) => setTeamCodeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleLoginTeam()
+                  }}
+                  placeholder="팀 코드 입력"
+                  className="min-w-[220px] rounded border border-border bg-input px-3 py-2 text-sm"
+                />
+                <Button onClick={handleLoginTeam}>팀 입장</Button>
+              </div>
+            )}
+          </section>
+        )}
 
         <div className="grid grid-cols-12 gap-5">
           <section className="col-span-3 rounded-xl border border-border bg-card p-5">
@@ -986,7 +1117,7 @@ export default function LandmarkAuctionPage() {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready'}
+                  disabled={auctionState.status === 'ready' || (!isAdmin && joinedTeamId !== team.id)}
                 />
               ))}
             </div>
@@ -1051,7 +1182,7 @@ export default function LandmarkAuctionPage() {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready'}
+                  disabled={auctionState.status === 'ready' || (!isAdmin && joinedTeamId !== team.id)}
                 />
               ))}
             </div>
