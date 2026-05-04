@@ -828,26 +828,22 @@ export default function LandmarkAuctionPage() {
   const rightTeams = safeTeams.slice(8, 16)
 
   const openResultsPage = async () => {
-    localStorage.setItem(
-      'auction_snapshot',
-      JSON.stringify({
-        teams: safeTeams,
-        landmarks: safeLandmarks,
-        created_at: new Date().toISOString(),
-      })
-    )
+  localStorage.setItem(
+    'auction_snapshot',
+    JSON.stringify({
+      teams: safeTeams,
+      landmarks: safeLandmarks,
+      created_at: new Date().toISOString(),
+    })
+  )
 
-    localStorage.setItem('auction_mode', 'results')
+  await supabase
+    .from('auction_state')
+    .update({ overlay_mode: 'results' })
+    .eq('id', 'main')
 
-    const { error } = await supabase
-      .from('auction_state')
-      .update({ overlay_mode: 'results' })
-      .eq('id', 'main')
-
-    if (error) console.error('overlay mode update error:', error)
-
-    window.location.href = '/admin/results'
-  }
+  window.location.href = '/admin/results'
+}
 
   return (
     <main className="min-h-screen bg-background p-4">
