@@ -1274,7 +1274,7 @@ function ResultsOverlay({
 
     return (
       <div
-        className={`relative h-full min-h-[260px] min-w-0 overflow-hidden rounded-lg border bg-[#141414] ${
+        className={`relative h-full min-h-0 min-w-0 overflow-hidden rounded-lg border bg-[#141414] ${
           player
             ? getRawIsCaptain(player)
               ? 'border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,0.55)]'
@@ -1354,7 +1354,7 @@ function ResultsOverlay({
             </span>
           </div>
 
-          <div className="grid min-h-0 flex-1 grid-cols-4 gap-2 overflow-hidden">
+          <div className="grid min-h-0 flex-1 grid-cols-4 items-stretch gap-2 overflow-hidden">
             {[0, 1, 2, 3].map((slotIndex) => (
               <ResultPlayerSlot
                 key={teamPlayers[slotIndex]?.id || `result-empty-${team.id}-${slotIndex}`}
