@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, ChevronLeft, ChevronRight, Monitor } from 'lucide-react'
+import { supabase } from '@/lib/supabase/client'
 
 type LocalPlayer = {
   id: string
@@ -385,8 +386,21 @@ export default function ResultsPage() {
     }
   }, [])
 
+  const syncResultPageToOverlay = async (nextPage: number) => {
+    localStorage.setItem('auction_mode', 'results')
+    localStorage.setItem('overlay_page', String(nextPage))
+
+    const { error } = await supabase
+      .from('auction_state')
+      .update({ overlay_mode: 'results', result_page: nextPage } as any)
+      .eq('id', 'main')
+
+    if (error) console.error('result page sync error:', error)
+  }
+
   useEffect(() => {
-    localStorage.setItem('overlay_page', String(page))
+    syncResultPageToOverlay(page)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page])
 
   const sortedTeams = useMemo(
@@ -405,9 +419,8 @@ export default function ResultsPage() {
 
   const pageTeams = page === 1 ? sortedTeams.slice(0, 8) : sortedTeams.slice(8, 16)
 
-  const openObsResults = () => {
-    localStorage.setItem('auction_mode', 'results')
-    localStorage.setItem('overlay_page', String(page))
+  const openObsResults = async () => {
+    await syncResultPageToOverlay(page)
     alert('OBS 오버레이가 결과창으로 전환됩니다. OBS 브라우저 소스는 /overlay 를 사용하세요.')
   }
 
@@ -453,12 +466,7 @@ export default function ResultsPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setPage((prev) => {
-                      const next = Math.max(1, prev - 1)
-                      localStorage.setItem('auction_mode', 'results')
-                      localStorage.setItem('overlay_page', String(next))
-                      return next
-                    })
+                    setPage((prev) => Math.max(1, prev - 1))
                   }}
                   disabled={page === 1}
                 >
@@ -474,12 +482,7 @@ export default function ResultsPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setPage((prev) => {
-                      const next = Math.min(maxPage, prev + 1)
-                      localStorage.setItem('auction_mode', 'results')
-                      localStorage.setItem('overlay_page', String(next))
-                      return next
-                    })
+                    setPage((prev) => Math.min(maxPage, prev + 1))
                   }}
                   disabled={page === maxPage}
                 >

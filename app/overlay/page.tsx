@@ -1231,8 +1231,25 @@ function ResultsOverlay({
   const pageStartNumber = (page - 1) * teamsPerPage + 1
 
   useEffect(() => {
-    const readResultPage = () => {
-      const savedPage = Number(localStorage.getItem('overlay_page') || '1')
+    const readResultPage = async () => {
+      let savedPage = Number(localStorage.getItem('overlay_page') || '1')
+
+      try {
+        const { data, error } = await supabase
+          .from('auction_state')
+          .select('result_page')
+          .eq('id', 'main')
+          .maybeSingle()
+
+        const dbPage = Number((data as any)?.result_page)
+        if (!error && Number.isFinite(dbPage) && dbPage > 0) {
+          savedPage = dbPage
+          localStorage.setItem('overlay_page', String(dbPage))
+        }
+      } catch {
+        // Supabase result_page 컬럼이 없거나 네트워크가 늦으면 localStorage 값을 임시로 사용합니다.
+      }
+
       const nextPage = Number.isFinite(savedPage)
         ? Math.min(Math.max(1, savedPage), maxPage)
         : 1
@@ -1249,7 +1266,7 @@ function ResultsOverlay({
     }
 
     window.addEventListener('storage', handleStorageChange)
-    const syncInterval = setInterval(readResultPage, 300)
+    const syncInterval = setInterval(readResultPage, 500)
 
     return () => {
       window.removeEventListener('storage', handleStorageChange)
@@ -1274,7 +1291,7 @@ function ResultsOverlay({
 
     return (
       <div
-        className={`relative h-full min-h-0 min-w-0 overflow-hidden rounded-lg border bg-[#141414] ${
+        className={`relative h-[150px] min-w-0 overflow-hidden rounded-lg border bg-[#141414] ${
           player
             ? getRawIsCaptain(player)
               ? 'border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,0.55)]'
@@ -1354,7 +1371,7 @@ function ResultsOverlay({
             </span>
           </div>
 
-          <div className="grid min-h-0 flex-1 grid-cols-4 items-stretch gap-2 overflow-hidden">
+          <div className="grid min-h-0 flex-1 grid-cols-4 gap-2 overflow-hidden">
             {[0, 1, 2, 3].map((slotIndex) => (
               <ResultPlayerSlot
                 key={teamPlayers[slotIndex]?.id || `result-empty-${team.id}-${slotIndex}`}
