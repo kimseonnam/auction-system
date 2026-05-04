@@ -1274,7 +1274,7 @@ function ResultsOverlay({
 
     return (
       <div
-        className={`relative h-[150px] min-w-0 overflow-hidden rounded-lg border bg-[#141414] ${
+        className={`relative h-full min-h-[260px] min-w-0 overflow-hidden rounded-lg border bg-[#141414] ${
           player
             ? getRawIsCaptain(player)
               ? 'border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,0.55)]'
