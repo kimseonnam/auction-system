@@ -54,8 +54,50 @@ type LocalAuctionLog = {
 
 type AuctionRole = 'admin' | 'participant'
 
-const DEFAULT_TIMER = 15
+const DEFAULT_TIMER = 20
 const DEFAULT_POINTS = 0
+const PLAYER_TIMER_OWNER_KEY = 'player_auction_timer_owner'
+
+
+const TIMER_OWNER_TTL = 3000
+
+const claimTimerOwner = (storageKey: string, ownerId: string) => {
+  try {
+    const now = Date.now()
+    const saved = localStorage.getItem(storageKey)
+    const parsed = saved ? JSON.parse(saved) : null
+
+    if (parsed?.id && parsed.id !== ownerId && Number(parsed.expiresAt || 0) > now) {
+      return false
+    }
+
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        id: ownerId,
+        expiresAt: now + TIMER_OWNER_TTL,
+      })
+    )
+
+    return true
+  } catch {
+    return true
+  }
+}
+
+const releaseTimerOwner = (storageKey: string, ownerId: string) => {
+  try {
+    const saved = localStorage.getItem(storageKey)
+    const parsed = saved ? JSON.parse(saved) : null
+
+    if (!parsed?.id || parsed.id === ownerId) {
+      localStorage.removeItem(storageKey)
+    }
+  } catch {
+    localStorage.removeItem(storageKey)
+  }
+}
+
 
 
 const createDefaultTeams = (): LocalTeam[] =>
@@ -125,6 +167,7 @@ const normalizeAuctionState = (value: any): LocalAuctionState => ({
 
 export default function AuctionPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const timerOwnerIdRef = useRef(`player-timer-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   const auctionStateRef = useRef<LocalAuctionState>(defaultAuctionState)
   const playersRef = useRef<LocalPlayer[]>([])
   const teamsRef = useRef<LocalTeam[]>([])
@@ -255,7 +298,7 @@ export default function AuctionPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadAuctionData)
       .subscribe()
 
-    const pollingInterval = setInterval(loadAuctionData, 500)
+    const pollingInterval = setInterval(loadAuctionData, 1200)
 
     return () => {
       clearInterval(pollingInterval)
@@ -541,12 +584,22 @@ export default function AuctionPage() {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
+      releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
       return
     }
 
     if (timerRef.current) return
+    if (!claimTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)) return
 
     timerRef.current = setInterval(async () => {
+      if (!claimTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)) {
+        if (timerRef.current) {
+          clearInterval(timerRef.current)
+          timerRef.current = null
+        }
+        return
+      }
+
       const prev = auctionStateRef.current
 
       if (prev.status !== 'running') {
@@ -554,6 +607,7 @@ export default function AuctionPage() {
           clearInterval(timerRef.current)
           timerRef.current = null
         }
+        releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
         return
       }
 
@@ -577,6 +631,7 @@ export default function AuctionPage() {
       if (nextTime <= 0 && timerRef.current) {
         clearInterval(timerRef.current)
         timerRef.current = null
+        releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
       }
     }, 1000)
 
@@ -585,6 +640,7 @@ export default function AuctionPage() {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
+      releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
     }
   }, [auctionState.status, isAdmin, saveLocalOverlaySnapshot])
 

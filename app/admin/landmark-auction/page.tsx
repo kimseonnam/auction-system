@@ -53,8 +53,50 @@ type AuctionLog = {
 
 type AuctionRole = 'admin' | 'participant'
 
-const DEFAULT_TIMER = 15
+const DEFAULT_TIMER = 20
 const DEFAULT_POINTS = 0
+const LANDMARK_TIMER_OWNER_KEY = 'landmark_auction_timer_owner'
+
+
+const TIMER_OWNER_TTL = 3000
+
+const claimTimerOwner = (storageKey: string, ownerId: string) => {
+  try {
+    const now = Date.now()
+    const saved = localStorage.getItem(storageKey)
+    const parsed = saved ? JSON.parse(saved) : null
+
+    if (parsed?.id && parsed.id !== ownerId && Number(parsed.expiresAt || 0) > now) {
+      return false
+    }
+
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        id: ownerId,
+        expiresAt: now + TIMER_OWNER_TTL,
+      })
+    )
+
+    return true
+  } catch {
+    return true
+  }
+}
+
+const releaseTimerOwner = (storageKey: string, ownerId: string) => {
+  try {
+    const saved = localStorage.getItem(storageKey)
+    const parsed = saved ? JSON.parse(saved) : null
+
+    if (!parsed?.id || parsed.id === ownerId) {
+      localStorage.removeItem(storageKey)
+    }
+  } catch {
+    localStorage.removeItem(storageKey)
+  }
+}
+
 
 const defaultAuctionState: LandmarkAuctionState = {
   current_landmark_id: null,
@@ -235,6 +277,13 @@ function normalizeState(value: unknown): LandmarkAuctionState {
 const getLandmarkImage = (landmark?: LocalLandmark | null) =>
   landmark?.image_url || landmark?.image || null
 
+const getTeamNumber = (teamId?: string | null) => {
+  if (!teamId) return 9999
+  const match = teamId.match(/team-(\d+)/)
+  return match ? Number(match[1]) : 9999
+}
+
+
 const isAuctionTargetLandmark = (landmark: LocalLandmark) =>
   !landmark.team_id && !landmark.is_passed
 
@@ -258,6 +307,8 @@ const makeTeamPayload = (team: LocalTeam) => ({
 
 export default function LandmarkAuctionPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const timerOwnerIdRef = useRef(`landmark-timer-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  const isTickingRef = useRef(false)
   const auctionStateRef = useRef<LandmarkAuctionState>(defaultAuctionState)
   const landmarksRef = useRef<LocalLandmark[]>([])
   const teamsRef = useRef<LocalTeam[]>([])
@@ -374,7 +425,7 @@ export default function LandmarkAuctionPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadAuctionData)
       .subscribe()
 
-    const pollingInterval = setInterval(loadAuctionData, 700)
+    const pollingInterval = setInterval(loadAuctionData, 1200)
 
     return () => {
       clearInterval(pollingInterval)
@@ -518,34 +569,78 @@ export default function LandmarkAuctionPage() {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
+      releaseTimerOwner(LANDMARK_TIMER_OWNER_KEY, timerOwnerIdRef.current)
       return
     }
 
     if (timerRef.current) return
+    if (!claimTimerOwner(LANDMARK_TIMER_OWNER_KEY, timerOwnerIdRef.current)) return
 
     timerRef.current = setInterval(async () => {
-      const prev = auctionStateRef.current
+      if (isTickingRef.current) return
+      isTickingRef.current = true
 
-      if (prev.status !== 'running') {
-        if (timerRef.current) {
+      try {
+        if (!claimTimerOwner(LANDMARK_TIMER_OWNER_KEY, timerOwnerIdRef.current)) {
+          if (timerRef.current) {
+            clearInterval(timerRef.current)
+            timerRef.current = null
+          }
+          return
+        }
+
+        const prev = auctionStateRef.current
+
+        if (prev.status !== 'running') {
+          if (timerRef.current) {
+            clearInterval(timerRef.current)
+            timerRef.current = null
+          }
+          releaseTimerOwner(LANDMARK_TIMER_OWNER_KEY, timerOwnerIdRef.current)
+          return
+        }
+
+        const nextTime = Math.max(0, prev.timer_remaining - 1)
+        const nextState: LandmarkAuctionState = {
+          ...prev,
+          timer_remaining: nextTime,
+          status: nextTime <= 0 ? 'paused' : 'running',
+        }
+
+        // 여러 관리자 창/시크릿 창이 동시에 열려도 같은 초를 두 번 차감하지 않도록
+        // DB의 현재 timer_remaining 값이 내가 본 prev 값과 같을 때만 갱신합니다.
+        const { data, error } = await supabase
+          .from('landmark_auction_state')
+          .update({ id: 'main', ...nextState })
+          .eq('id', 'main')
+          .eq('timer_remaining', prev.timer_remaining)
+          .eq('status', 'running')
+          .select()
+          .maybeSingle()
+
+        if (error) {
+          console.error('landmark timer save error:', error)
+          return
+        }
+
+        // 다른 창이 먼저 갱신했다면 여기서는 로컬 값을 강제로 내리지 않고 DB 값을 다시 읽습니다.
+        if (!data) {
+          await loadAuctionData()
+          return
+        }
+
+        const savedState = normalizeState(data)
+        auctionStateRef.current = savedState
+        setAuctionState(savedState)
+        saveLocalOverlaySnapshot(teamsRef.current, landmarksRef.current, savedState, logsRef.current)
+
+        if (nextTime <= 0 && timerRef.current) {
           clearInterval(timerRef.current)
           timerRef.current = null
+          releaseTimerOwner(LANDMARK_TIMER_OWNER_KEY, timerOwnerIdRef.current)
         }
-        return
-      }
-
-      const nextTime = Math.max(0, prev.timer_remaining - 1)
-      const nextState: LandmarkAuctionState = {
-        ...prev,
-        timer_remaining: nextTime,
-        status: nextTime <= 0 ? 'paused' : 'running',
-      }
-
-      await saveAuctionState(nextState)
-
-      if (nextTime <= 0 && timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
+      } finally {
+        isTickingRef.current = false
       }
     }, 1000)
 
@@ -554,9 +649,10 @@ export default function LandmarkAuctionPage() {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
+      releaseTimerOwner(LANDMARK_TIMER_OWNER_KEY, timerOwnerIdRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auctionState.status, isAdmin])
+  }, [auctionState.status, isAdmin, loadAuctionData, saveLocalOverlaySnapshot])
 
   const handleStart = async () => {
     if (!isAdmin) return
@@ -601,19 +697,34 @@ export default function LandmarkAuctionPage() {
   }
 
   const handleBid = async (team: LocalTeam, amount: number) => {
-    if (!isAdmin && joinedTeamId !== team.id) return
     const currentState = auctionStateRef.current
-    if (amount <= currentState.current_bid) return
-    if (team.points < amount) return
+    const latestTeam = teamsRef.current.find((item) => item.id === team.id) || team
+    const safeAmount = Number(amount)
+
+    if (!isAdmin && joinedTeamId !== latestTeam.id) return
+    if (!Number.isFinite(safeAmount) || safeAmount <= 0) return
+    if (!currentState.current_landmark_id) {
+      alert('현재 경매 중인 랜드마크가 없습니다.')
+      return
+    }
+    if (currentState.status === 'ready') {
+      alert('경매 시작 후 입찰할 수 있습니다.')
+      return
+    }
+    if (safeAmount <= currentState.current_bid) return
+    if (Number(latestTeam.points || 0) < safeAmount) {
+      alert('보유 포인트보다 많이 입찰할 수 없습니다.')
+      return
+    }
 
     await saveAuctionState({
       ...currentState,
-      current_bid: amount,
-      current_bidder_team_id: team.id,
+      current_bid: safeAmount,
+      current_bidder_team_id: latestTeam.id,
       timer_remaining: DEFAULT_TIMER,
     })
 
-    await addLog('bid', `[${team.name} - ${amount}포인트 입찰]`)
+    await addLog('bid', `[${latestTeam.name} - ${safeAmount}포인트 입찰]`)
   }
 
   const handleSold = async () => {
@@ -824,8 +935,9 @@ export default function LandmarkAuctionPage() {
   }
 
   const availableCount = safeLandmarks.filter(isAuctionTargetLandmark).length
-  const leftTeams = safeTeams.slice(0, 8)
-  const rightTeams = safeTeams.slice(8, 16)
+  const displayTeams = [...safeTeams].sort((a, b) => getTeamNumber(a.id) - getTeamNumber(b.id))
+  const leftTeams = displayTeams.slice(0, 8)
+  const rightTeams = displayTeams.slice(8, 16)
 
   const openResultsPage = async () => {
   localStorage.setItem(
@@ -1126,7 +1238,7 @@ export default function LandmarkAuctionPage() {
                 <LandmarkTeamBidCard
                   key={team.id}
                   team={team}
-                  landmarks={safeLandmarks.filter((landmark) => team.landmarks?.includes(landmark.id))}
+                  landmarks={safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id))}
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
@@ -1166,7 +1278,7 @@ export default function LandmarkAuctionPage() {
               <div className="grid grid-cols-1 gap-2 text-sm">
                 {safeTeams.map((team) => {
                   const ownedLandmarks = safeLandmarks.filter((landmark) =>
-                    team.landmarks?.includes(landmark.id)
+                    landmark.team_id === team.id || team.landmarks?.includes(landmark.id)
                   )
 
                   return (
@@ -1191,7 +1303,7 @@ export default function LandmarkAuctionPage() {
                 <LandmarkTeamBidCard
                   key={team.id}
                   team={team}
-                  landmarks={safeLandmarks.filter((landmark) => team.landmarks?.includes(landmark.id))}
+                  landmarks={safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id))}
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}

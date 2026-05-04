@@ -709,8 +709,11 @@ export default function OverlayPage() {
     return availableLandmarks[currentIndex + 1]
   })()
 
-  const leftTeams = safeTeams.slice(0, 8)
-  const rightTeams = safeTeams.slice(8, 16)
+  // Supabase에서 team-1, team-10, team-11 순서로 정렬되어 들어오는 문제를 방지합니다.
+  // OBS 오른쪽 팀 목록이 항상 TEAM 1~8 / TEAM 9~16 순서로 보이게 숫자 기준으로 정렬합니다.
+  const displayTeams = [...safeTeams].sort((a, b) => getTeamNumber(a.id) - getTeamNumber(b.id))
+  const leftTeams = displayTeams.slice(0, 8)
+  const rightTeams = displayTeams.slice(8, 16)
 
   if (auctionMode === 'results') {
     return (
@@ -934,7 +937,12 @@ export default function OverlayPage() {
                 <LandmarkTeamCard
                   key={team.id}
                   team={team}
-                  landmarks={safeLandmarks.filter((landmark) => team.landmarks?.includes(landmark.id))}
+                  landmarks={safeLandmarks.filter(
+                  (landmark) =>
+                    landmark.team_id === team.id ||
+                    landmark.teamId === team.id ||
+                    team.landmarks?.includes(landmark.id)
+                )}
                   isCurrentBidder={team.id === landmarkAuctionState.current_bidder_team_id}
                 />
               ))}
@@ -945,7 +953,12 @@ export default function OverlayPage() {
                 <LandmarkTeamCard
                   key={team.id}
                   team={team}
-                  landmarks={safeLandmarks.filter((landmark) => team.landmarks?.includes(landmark.id))}
+                  landmarks={safeLandmarks.filter(
+                  (landmark) =>
+                    landmark.team_id === team.id ||
+                    landmark.teamId === team.id ||
+                    team.landmarks?.includes(landmark.id)
+                )}
                   isCurrentBidder={team.id === landmarkAuctionState.current_bidder_team_id}
                 />
               ))}
@@ -1160,7 +1173,12 @@ export default function OverlayPage() {
                 key={team.id}
                 team={team}
                 players={safePlayers.filter((player) => player.team_id === team.id)}
-                landmarks={safeLandmarks.filter((landmark) => team.landmarks?.includes(landmark.id))}
+                landmarks={safeLandmarks.filter(
+                  (landmark) =>
+                    landmark.team_id === team.id ||
+                    landmark.teamId === team.id ||
+                    team.landmarks?.includes(landmark.id)
+                )}
                 isCurrentBidder={team.id === auctionState.current_bidder_team_id}
               />
             ))}
@@ -1172,7 +1190,12 @@ export default function OverlayPage() {
                 key={team.id}
                 team={team}
                 players={safePlayers.filter((player) => player.team_id === team.id)}
-                landmarks={safeLandmarks.filter((landmark) => team.landmarks?.includes(landmark.id))}
+                landmarks={safeLandmarks.filter(
+                  (landmark) =>
+                    landmark.team_id === team.id ||
+                    landmark.teamId === team.id ||
+                    team.landmarks?.includes(landmark.id)
+                )}
                 isCurrentBidder={team.id === auctionState.current_bidder_team_id}
               />
             ))}
@@ -1717,21 +1740,8 @@ function OverlayShell({
 
         {children}
 
-        <footer className="h-[28px] shrink-0 border-t border-[#262626] px-5 flex items-center justify-between text-[12px] text-[#999]">
-          <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full border border-[#444] flex items-center justify-center text-white font-black">
-              N
-            </span>
-            <span className="font-bold">{settings.name}</span>
-          </div>
+        {/* 하단 방송 문구 박스 제거됨 */}
 
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            <span>LIVE&nbsp;&nbsp;{footerText}</span>
-          </div>
-
-          <span>치지직 김선남 많관부</span>
-        </footer>
       </div>
     </div>
   )
