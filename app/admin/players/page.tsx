@@ -81,7 +81,9 @@ const normalizePlayer = (player: any): LocalPlayer => ({
   is_captain: Boolean(player.is_captain),
 })
 
-const compressImageToDataUrl = (file: File): Promise<string> => {
+const PLAYER_IMAGE_BUCKET = 'player-images'
+
+const compressImageToBlob = (file: File): Promise<Blob> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
 
@@ -89,7 +91,7 @@ const compressImageToDataUrl = (file: File): Promise<string> => {
       const img = new Image()
 
       img.onload = () => {
-        const maxSize = 420
+        const maxSize = 720
         const scale = Math.min(maxSize / img.width, maxSize / img.height, 1)
         const width = Math.round(img.width * scale)
         const height = Math.round(img.height * scale)
@@ -105,7 +107,18 @@ const compressImageToDataUrl = (file: File): Promise<string> => {
         }
 
         ctx.drawImage(img, 0, 0, width, height)
-        resolve(canvas.toDataURL('image/jpeg', 0.72))
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error('이미지 압축에 실패했습니다.'))
+              return
+            }
+
+            resolve(blob)
+          },
+          'image/jpeg',
+          0.78
+        )
       }
 
       img.onerror = () => reject(new Error('이미지를 불러오지 못했습니다.'))
@@ -115,6 +128,30 @@ const compressImageToDataUrl = (file: File): Promise<string> => {
     reader.onerror = () => reject(new Error('파일을 읽지 못했습니다.'))
     reader.readAsDataURL(file)
   })
+}
+
+const uploadPlayerImageToStorage = async (file: File, playerId?: string) => {
+  const compressedBlob = await compressImageToBlob(file)
+  const safeId = playerId || crypto.randomUUID()
+  const filePath = `${safeId}/${Date.now()}.jpg`
+
+  const { error } = await supabase.storage
+    .from(PLAYER_IMAGE_BUCKET)
+    .upload(filePath, compressedBlob, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    })
+
+  if (error) {
+    console.error('이미지 업로드 실패:', error)
+    throw new Error('이미지 업로드에 실패했습니다. Supabase Storage에 player-images 버킷이 있는지 확인해주세요.')
+  }
+
+  const { data } = supabase.storage
+    .from(PLAYER_IMAGE_BUCKET)
+    .getPublicUrl(filePath)
+
+  return data.publicUrl
 }
 
 export default function PlayersManagePage() {
@@ -605,20 +642,21 @@ function PlayerModal({ player, onClose, onSave }: PlayerModalProps) {
   const [imagePreview, setImagePreview] = useState<string | null>(
     player?.image_url || null
   )
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null)
   const [bio, setBio] = useState(player?.bio || '')
   const [isCaptain, setIsCaptain] = useState(player?.is_captain || false)
 
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    try {
-      const compressed = await compressImageToDataUrl(file)
-      setImagePreview(compressed)
-    } catch (error) {
-      console.error(error)
-      alert('이미지 처리 중 오류가 발생했습니다.')
+    if (!file.type.startsWith('image/')) {
+      alert('이미지 파일만 선택해주세요.')
+      return
     }
+
+    setSelectedImageFile(file)
+    setImagePreview(URL.createObjectURL(file))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -628,21 +666,28 @@ function PlayerModal({ player, onClose, onSave }: PlayerModalProps) {
 
     setLoading(true)
 
-    const playerData: Omit<LocalPlayer, 'id'> = {
-      name: name.trim(),
-      tier,
-      detail_tier: detailTier,
-      available_days: availableDays.trim(),
-      bio: bio.trim().slice(0, 200),
-      image_url: imagePreview,
-      team_id: player?.team_id || null,
-      bid_amount: isCaptain ? 0 : player?.bid_amount || 0,
-      is_passed: isCaptain ? false : player?.is_passed || false,
-      is_captain: isCaptain,
-    }
-
     try {
+      const imageUrl = selectedImageFile
+        ? await uploadPlayerImageToStorage(selectedImageFile, player?.id)
+        : imagePreview
+
+      const playerData: Omit<LocalPlayer, 'id'> = {
+        name: name.trim(),
+        tier,
+        detail_tier: detailTier,
+        available_days: availableDays.trim(),
+        bio: bio.trim().slice(0, 200),
+        image_url: imageUrl,
+        team_id: player?.team_id || null,
+        bid_amount: isCaptain ? 0 : player?.bid_amount || 0,
+        is_passed: isCaptain ? false : player?.is_passed || false,
+        is_captain: isCaptain,
+      }
+
       await onSave(playerData, player?.id)
+    } catch (error) {
+      console.error(error)
+      alert(error instanceof Error ? error.message : '저장 중 오류가 발생했습니다.')
     } finally {
       setLoading(false)
     }
