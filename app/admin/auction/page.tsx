@@ -359,8 +359,16 @@ export default function AuctionPage() {
     setJoinCodeError('')
   }
 
-  const openLandmarkAuction = () => {
+  const openLandmarkAuction = async () => {
     localStorage.setItem('auction_mode', 'landmark')
+
+    const { error } = await supabase
+      .from('auction_state')
+      .update({ overlay_mode: 'landmark' })
+      .eq('id', 'main')
+
+    if (error) console.error('overlay mode update error:', error)
+
     window.open('/admin/landmark-auction', '_self')
   }
 
@@ -871,10 +879,7 @@ export default function AuctionPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
-                localStorage.setItem('auction_mode', 'landmark')
-                window.location.href = '/admin/landmark-auction'
-              }}
+              onClick={openLandmarkAuction}
             >
               랜드마크 경매
             </Button>

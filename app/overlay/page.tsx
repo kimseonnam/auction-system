@@ -59,6 +59,7 @@ type LocalAuctionState = {
   current_bidder_team_id: string | null
   timer_remaining: number
   status: 'ready' | 'running' | 'paused'
+  overlay_mode?: AuctionMode | null
 }
 
 type LandmarkAuctionState = {
@@ -114,6 +115,12 @@ const DEFAULT_LANDMARK_AUCTION_STATE: LandmarkAuctionState = {
   current_bidder_team_id: null,
   timer_remaining: 15,
   status: 'ready',
+}
+
+
+const normalizeAuctionMode = (value: unknown): AuctionMode | null => {
+  if (value === 'player' || value === 'landmark' || value === 'results') return value
+  return null
 }
 
 const TIERS = ['A', 'B', 'C', 'D']
@@ -490,15 +497,6 @@ export default function OverlayPage() {
   const popupReadyRef = useRef(false)
 
   const readLocalModeAndSettings = () => {
-    const savedMode = localStorage.getItem('auction_mode')
-    setAuctionMode(
-      savedMode === 'landmark'
-        ? 'landmark'
-        : savedMode === 'results'
-        ? 'results'
-        : 'player'
-    )
-
     const savedSettings = localStorage.getItem('auction_settings')
     setSettings(safeJsonParse<LocalSettings>(savedSettings, DEFAULT_SETTINGS))
   }
@@ -542,6 +540,7 @@ export default function OverlayPage() {
             auctionStateResult.data.status === 'ready'
               ? auctionStateResult.data.status
               : 'ready',
+          overlay_mode: normalizeAuctionMode((auctionStateResult.data as any).overlay_mode),
         }
       : DEFAULT_AUCTION_STATE
 
@@ -567,6 +566,11 @@ export default function OverlayPage() {
     setLandmarks(normalizeLandmarks(landmarksResult.data || []))
     setLandmarkAuctionState(loadedLandmarkState)
 
+    const dbOverlayMode = normalizeAuctionMode((auctionStateResult.data as any)?.overlay_mode)
+    if (dbOverlayMode) {
+      setAuctionMode(dbOverlayMode)
+    }
+
     // 현재 랜드마크 경매 로그 테이블을 아직 따로 만들지 않았기 때문에,
     // 랜드마크 모드에서도 공용 auction_logs를 사용합니다.
     setLandmarkLogs((logsResult.data || []) as LocalAuctionLog[])
@@ -590,13 +594,11 @@ export default function OverlayPage() {
 
     // Realtime이 늦거나 꺼져 있어도 OBS 화면이 따라오도록 1초마다 보정합니다.
     const interval = setInterval(loadOverlayData, 1000)
-    const modeInterval = setInterval(readLocalModeAndSettings, 300)
 
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       supabase.removeChannel(channel)
       clearInterval(interval)
-      clearInterval(modeInterval)
       if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

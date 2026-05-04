@@ -448,6 +448,20 @@ export default function LandmarkAuctionPage() {
     if (error) console.error('landmark logs insert error:', error)
   }
 
+  const switchToPlayerAuction = async () => {
+    localStorage.setItem('auction_mode', 'player')
+
+    const { error } = await supabase
+      .from('auction_state')
+      .update({ overlay_mode: 'player' })
+      .eq('id', 'main')
+
+    if (error) console.error('overlay mode update error:', error)
+
+    window.location.href = '/admin/auction'
+  }
+
+
   const handleLoginTeam = () => {
     const code = teamCodeInput.trim()
     if (!code) return
@@ -813,7 +827,7 @@ export default function LandmarkAuctionPage() {
   const leftTeams = safeTeams.slice(0, 8)
   const rightTeams = safeTeams.slice(8, 16)
 
-  const openResultsPage = () => {
+  const openResultsPage = async () => {
     localStorage.setItem(
       'auction_snapshot',
       JSON.stringify({
@@ -824,6 +838,14 @@ export default function LandmarkAuctionPage() {
     )
 
     localStorage.setItem('auction_mode', 'results')
+
+    const { error } = await supabase
+      .from('auction_state')
+      .update({ overlay_mode: 'results' })
+      .eq('id', 'main')
+
+    if (error) console.error('overlay mode update error:', error)
+
     window.location.href = '/admin/results'
   }
 
@@ -849,14 +871,9 @@ export default function LandmarkAuctionPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Link
-              href="/admin/auction"
-              onClick={() => localStorage.setItem('auction_mode', 'player')}
-            >
-              <Button variant="outline" size="sm">
-                플레이어 경매
-              </Button>
-            </Link>
+            <Button variant="outline" size="sm" onClick={switchToPlayerAuction}>
+              플레이어 경매
+            </Button>
 
             {isAdmin && (
               <>
