@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Lock, ArrowLeft, Users, Map, Play, Settings, LogOut } from 'lucide-react'
+import { supabase } from '@/lib/supabase/client'
 
 const ADMIN_CODE = '1234'
 
@@ -16,6 +17,32 @@ export default function AdminPage() {
   const [teamCount, setTeamCount] = useState(0)
   const [landmarkCount, setLandmarkCount] = useState(0)
 
+  const refreshCounts = useCallback(async () => {
+    const [playersResult, teamsResult, landmarksResult] = await Promise.all([
+      supabase.from('players').select('id', { count: 'exact', head: true }),
+      supabase.from('teams').select('id', { count: 'exact', head: true }),
+      supabase.from('landmarks').select('id', { count: 'exact', head: true }),
+    ])
+
+    if (playersResult.error) {
+      console.error('플레이어 수 불러오기 실패:', playersResult.error)
+    } else {
+      setPlayerCount(playersResult.count || 0)
+    }
+
+    if (teamsResult.error) {
+      console.error('팀 수 불러오기 실패:', teamsResult.error)
+    } else {
+      setTeamCount(teamsResult.count || 0)
+    }
+
+    if (landmarksResult.error) {
+      console.error('랜드마크 수 불러오기 실패:', landmarksResult.error)
+    } else {
+      setLandmarkCount(landmarksResult.count || 0)
+    }
+  }, [])
+
   useEffect(() => {
     const storedAuth = sessionStorage.getItem('admin_authenticated')
     const storedRole = sessionStorage.getItem('auction_role')
@@ -25,32 +52,28 @@ export default function AdminPage() {
     }
 
     refreshCounts()
-  }, [])
 
-  const refreshCounts = () => {
-    const savedPlayers = localStorage.getItem('auction_players')
-    const players = savedPlayers ? JSON.parse(savedPlayers) : []
-    setPlayerCount(players.length)
+    const channel = supabase
+      .channel('admin-dashboard-counts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, refreshCounts)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, refreshCounts)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, refreshCounts)
+      .subscribe()
 
-    const savedTeams = localStorage.getItem('auction_teams')
-    const teams = savedTeams ? JSON.parse(savedTeams) : []
-    setTeamCount(teams.length)
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [refreshCounts])
 
-    const savedLandmarks = localStorage.getItem('auction_landmarks')
-    const landmarks = savedLandmarks ? JSON.parse(savedLandmarks) : []
-    setLandmarkCount(landmarks.length)
-  }
-
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (adminCode.trim() === ADMIN_CODE) {
       setIsAuthenticated(true)
 
-      // ✅ 관리자 권한 저장
       sessionStorage.setItem('admin_authenticated', 'true')
       sessionStorage.setItem('auction_role', 'admin')
 
       setError('')
-      refreshCounts()
+      await refreshCounts()
     } else {
       setError('관리자 코드가 올바르지 않습니다.')
     }
