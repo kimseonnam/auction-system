@@ -480,6 +480,52 @@ const playPopupSound = (type: 'sold' | 'passed') => {
     // 브라우저 자동재생 제한 등으로 실패해도 화면은 정상 표시
   }
 }
+const createBidSoundPlayer = (audioContextRef: React.MutableRefObject<AudioContext | null>) => {
+  return () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioContextClass) return
+
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContextClass()
+      }
+
+      const ctx = audioContextRef.current
+
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {
+          // OBS/브라우저 자동재생 정책으로 resume이 막혀도 화면은 계속 정상 동작합니다.
+        })
+      }
+
+      const now = ctx.currentTime
+      const notes = [740, 980, 1320]
+      const times = [0.07, 0.08, 0.1]
+
+      notes.forEach((freq, index) => {
+        const oscillator = ctx.createOscillator()
+        const gain = ctx.createGain()
+        const startTime = now + index * 0.055
+
+        oscillator.type = 'triangle'
+        oscillator.frequency.setValueAtTime(freq, startTime)
+
+        gain.gain.setValueAtTime(0.0001, startTime)
+        gain.gain.exponentialRampToValueAtTime(0.13, startTime + 0.01)
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + times[index])
+
+        oscillator.connect(gain)
+        gain.connect(ctx.destination)
+
+        oscillator.start(startTime)
+        oscillator.stop(startTime + times[index] + 0.02)
+      })
+    } catch {
+      // 사운드 실패 시에도 오버레이 화면은 정상 유지
+    }
+  }
+}
+
 
 export default function OverlayPage() {
   const [settings, setSettings] = useState<LocalSettings>(DEFAULT_SETTINGS)
@@ -497,6 +543,36 @@ export default function OverlayPage() {
   const popupTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastPopupModeRef = useRef<AuctionMode | null>(null)
   const popupReadyRef = useRef(false)
+
+  const bidAudioContextRef = useRef<AudioContext | null>(null)
+  const processedBidLogIdsRef = useRef<Set<string>>(new Set())
+  const bidSoundQueueRef = useRef<LocalAuctionLog[]>([])
+  const isPlayingBidSoundQueueRef = useRef(false)
+  const bidSoundReadyRef = useRef(false)
+  const bidSoundTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  const playBidSound = createBidSoundPlayer(bidAudioContextRef)
+
+  const processBidSoundQueue = () => {
+    if (isPlayingBidSoundQueueRef.current) return
+
+    isPlayingBidSoundQueueRef.current = true
+
+    const playNext = () => {
+      const nextLog = bidSoundQueueRef.current.shift()
+
+      if (!nextLog) {
+        isPlayingBidSoundQueueRef.current = false
+        return
+      }
+
+      playBidSound()
+
+      bidSoundTimerRef.current = setTimeout(playNext, 145)
+    }
+
+    playNext()
+  }
 
   const readLocalModeAndSettings = () => {
     const savedSettings = localStorage.getItem('auction_settings')
@@ -610,6 +686,8 @@ export default function OverlayPage() {
       supabase.removeChannel(channel)
       clearInterval(interval)
       if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
+      if (bidSoundTimerRef.current) clearTimeout(bidSoundTimerRef.current)
+      bidAudioContextRef.current?.close().catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -683,6 +761,32 @@ export default function OverlayPage() {
       playPopupSound('passed')
       popupTimerRef.current = setTimeout(() => setPopup(null), 2400)
     }
+  }, [logs, landmarkLogs, auctionMode])
+
+
+  useEffect(() => {
+    const activeLogs = auctionMode === 'landmark' ? landmarkLogs : logs
+    const bidLogs = activeLogs
+      .filter((log) => log.action === 'bid')
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+    // 오버레이 첫 로딩/모드 전환 시 기존 입찰 로그로 사운드가 몰아서 나는 것을 방지
+    if (!bidSoundReadyRef.current) {
+      bidLogs.forEach((log) => processedBidLogIdsRef.current.add(log.id))
+      bidSoundReadyRef.current = true
+      return
+    }
+
+    const newBidLogs = bidLogs.filter((log) => !processedBidLogIdsRef.current.has(log.id))
+
+    if (newBidLogs.length === 0) return
+
+    newBidLogs.forEach((log) => processedBidLogIdsRef.current.add(log.id))
+
+    // 동시에 여러 팀장이 입찰해도 사운드는 오버레이에서만 순서대로 재생
+    bidSoundQueueRef.current.push(...newBidLogs)
+    processBidSoundQueue()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logs, landmarkLogs, auctionMode])
 
   const safeTeams = Array.isArray(teams) ? teams : []

@@ -624,19 +624,29 @@ export default function AuctionPage() {
       }
 
       const nextTime = Math.max(0, prev.timer_remaining - 1)
+      const nextStatus = nextTime <= 0 ? 'paused' : 'running'
+
       const nextState: LocalAuctionState = {
         ...prev,
         timer_remaining: nextTime,
-        status: nextTime <= 0 ? 'paused' : 'running',
+        status: nextStatus,
       }
 
       auctionStateRef.current = nextState
       setAuctionState(nextState)
       saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, nextState, logsRef.current)
 
+      // 중요:
+      // 타이머는 timer_remaining/status만 저장합니다.
+      // current_bid/current_bidder_team_id/current_player_id까지 같이 저장하면
+      // 참가자 입찰과 0초 저장이 겹칠 때 입찰 팀 정보가 사라질 수 있습니다.
       const { error } = await supabase
         .from('auction_state')
-        .upsert({ id: 'main', ...nextState })
+        .update({
+          timer_remaining: nextTime,
+          status: nextStatus,
+        })
+        .eq('id', 'main')
 
       if (error) console.error('timer save error:', error)
 
@@ -768,6 +778,11 @@ export default function AuctionPage() {
 
     if (wonPlayerCount >= 3) {
       alert('이미 플레이어 3명을 낙찰받은 팀은 더 이상 입찰할 수 없습니다.')
+      return
+    }
+
+    if (auctionState.status !== 'running' || auctionState.timer_remaining <= 0) {
+      alert('입찰 시간이 종료되었습니다.')
       return
     }
 
@@ -937,7 +952,7 @@ export default function AuctionPage() {
 
   return (
     <main className="min-h-screen bg-background p-4">
-      <div className="mx-auto max-w-[1880px] space-y-5">
+      <div className="mx-auto max-w-[1880px] space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link href={isAdmin ? '/admin' : '/'}>
@@ -1146,7 +1161,7 @@ export default function AuctionPage() {
             </div>
           </section>
 
-          <section className="col-span-6 rounded-xl border border-border bg-card p-5">
+          <section className="col-span-7 rounded-xl border border-border bg-card p-5">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-xl font-black text-primary">경매 순서</h3>
               <span className="text-sm text-muted-foreground">
@@ -1191,7 +1206,7 @@ export default function AuctionPage() {
             </div>
           </section>
 
-          <section className="col-span-3 rounded-xl border border-border bg-card p-5">
+          <section className="col-span-2 rounded-xl border border-border bg-card p-5">
             <h3 className="mb-4 text-xl font-black text-primary">유찰자 목록</h3>
 
             {passedPlayers.length > 0 ? (
@@ -1215,9 +1230,9 @@ export default function AuctionPage() {
         </div>
 
         {isAdmin && (
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div className="rounded-xl border border-border bg-card/80 p-3 flex flex-wrap items-center justify-center gap-2">
             <Button
-              className="h-12 px-6 text-base font-bold bg-red-600 hover:bg-red-700"
+              className="h-10 px-4 text-sm font-bold bg-red-600 hover:bg-red-700"
               onClick={handleStart}
               disabled={auctionState.status === 'running'}
             >
@@ -1227,7 +1242,7 @@ export default function AuctionPage() {
 
             <Button
               variant="secondary"
-              className="h-12 px-6 text-base font-bold"
+              className="h-10 px-4 text-sm font-bold"
               onClick={handlePause}
               disabled={auctionState.status !== 'running'}
             >
@@ -1236,7 +1251,7 @@ export default function AuctionPage() {
             </Button>
 
             <Button
-              className="h-12 px-6 text-base font-bold bg-green-600 hover:bg-green-700"
+              className="h-10 px-4 text-sm font-bold bg-green-600 hover:bg-green-700"
               onClick={handleSold}
               disabled={!auctionState.current_bidder_team_id}
             >
@@ -1246,7 +1261,7 @@ export default function AuctionPage() {
 
             <Button
               variant="destructive"
-              className="h-12 px-6 text-base font-bold"
+              className="h-10 px-4 text-sm font-bold"
               onClick={handlePassed}
               disabled={!currentPlayer}
             >
@@ -1256,7 +1271,7 @@ export default function AuctionPage() {
 
             <Button
               variant="outline"
-              className="h-12 px-6 text-base font-bold"
+              className="h-10 px-4 text-sm font-bold"
               onClick={handlePrevPlayer}
             >
               <ChevronLeft className="mr-2 h-5 w-5" />
@@ -1265,7 +1280,7 @@ export default function AuctionPage() {
 
             <Button
               variant="outline"
-              className="h-12 px-6 text-base font-bold"
+              className="h-10 px-4 text-sm font-bold"
               onClick={handleNextPlayer}
             >
               다음 선수
@@ -1274,7 +1289,7 @@ export default function AuctionPage() {
 
             <Button
               variant="outline"
-              className="h-12 px-6 text-base font-bold"
+              className="h-10 px-4 text-sm font-bold"
               onClick={handleUndo}
             >
               되돌리기
@@ -1282,7 +1297,7 @@ export default function AuctionPage() {
 
             <Button
               variant="destructive"
-              className="h-12 px-6 text-base font-bold bg-red-900 hover:bg-red-800"
+              className="h-10 px-4 text-sm font-bold bg-red-900 hover:bg-red-800"
               onClick={handleResetAll}
             >
               전체 초기화
@@ -1290,7 +1305,7 @@ export default function AuctionPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-[1fr_440px_1fr] gap-5">
+        <div className="grid grid-cols-[1fr_620px_1fr] gap-4">
           <section className="space-y-3">
             <h3 className="text-lg font-black text-primary">팀 입찰 1~8</h3>
             <div className="grid grid-cols-2 gap-3">
@@ -1319,21 +1334,27 @@ export default function AuctionPage() {
 
           <section className="space-y-4">
             <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="mb-3 text-xl font-black text-primary">경매 로그</h3>
-              <div className="space-y-1 max-h-[180px] overflow-y-auto text-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-2xl font-black text-primary">경매 로그</h3>
+                <span className="text-sm font-bold text-muted-foreground">
+                  최신 입찰이 위에 표시됩니다
+                </span>
+              </div>
+
+              <div className="min-h-[420px] max-h-[520px] space-y-2 overflow-y-auto rounded-lg border border-border bg-background/35 p-4 text-base font-bold">
                 {logs.filter((log) => ['bid', 'sold', 'passed'].includes(log.action)).length > 0 ? (
                   logs
                     .filter((log) => ['bid', 'sold', 'passed'].includes(log.action))
                     .map((log) => (
                       <p
                         key={log.id}
-                        className={
+                        className={`rounded-md bg-black/25 px-3 py-2 ${
                           log.action === 'bid'
                             ? 'text-yellow-400'
                             : log.action === 'sold'
                             ? 'text-green-400'
                             : 'text-red-400'
-                        }
+                        }`}
                       >
                         {log.message}
                       </p>
@@ -1344,13 +1365,17 @@ export default function AuctionPage() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-border bg-card p-5">
-              <h3 className="mb-3 text-xl font-black text-primary">팀 현황</h3>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-lg font-black text-primary">팀 현황 요약</h3>
+                <span className="text-xs text-muted-foreground">포인트</span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2 text-sm">
                 {teams.map((team) => (
-                  <div key={team.id} className="flex items-center justify-between gap-3">
-                    <span className="truncate text-xl font-extrabold text-white">{team.name}</span>
-                    <span className="shrink-0 text-white text-base font-bold">{team.points}포인트</span>
+                  <div key={team.id} className="flex items-center justify-between gap-2 rounded bg-background/45 px-2 py-2">
+                    <span className="truncate font-extrabold text-white">{team.name}</span>
+                    <span className="shrink-0 text-xs font-bold text-primary">{team.points}P</span>
                   </div>
                 ))}
               </div>
@@ -1432,16 +1457,16 @@ function TeamBidCard({
 
   return (
     <div
-      className={`rounded-xl border bg-card p-4 transition-all ${
+      className={`rounded-xl border bg-card p-3 transition-all ${
         isCurrentBidder ? 'border-primary shadow-[0_0_16px_rgba(239,68,68,0.35)]' : 'border-border'
       }`}
     >
       <div className="mb-3 flex items-center justify-between gap-2">
-        <span className="truncate text-xl font-extrabold text-white">{team.name}</span>
-        <span className="shrink-0 text-lg font-extrabold text-primary">{team.points}포인트</span>
+        <span className="truncate text-lg font-extrabold text-white">{team.name}</span>
+        <span className="shrink-0 text-base font-extrabold text-primary">{team.points}포인트</span>
       </div>
 
-      <div className="mb-3 min-h-[74px] rounded-lg border border-dashed border-border bg-background/40 p-2">
+      <div className="mb-2 min-h-[66px] rounded-lg border border-dashed border-border bg-background/40 p-2">
         {players.length > 0 ? (
           <div className="space-y-1.5">
             {players.map((player) => (
@@ -1454,7 +1479,7 @@ function TeamBidCard({
             ))}
           </div>
         ) : (
-          <div className="flex h-[54px] items-center justify-center text-xs text-muted-foreground">
+          <div className="flex h-[46px] items-center justify-center text-xs text-muted-foreground">
             아직 낙찰 없음
           </div>
         )}

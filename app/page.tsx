@@ -164,7 +164,7 @@ export default function HomePage() {
               </div>
             </Link>
           ) : (
-            <Link href="/admin/auction" className="group">
+            <Link href="/participant" className="group">
               <div className="h-full min-h-[220px] rounded-2xl border border-border bg-card p-10 transition-all duration-200 hover:border-primary hover:shadow-xl hover:shadow-primary/20">
                 <div className="mb-6 flex items-center gap-5">
                   <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
