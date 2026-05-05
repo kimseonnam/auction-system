@@ -5,22 +5,52 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ArrowLeft, Search, Users } from 'lucide-react'
+import { supabase } from '@/lib/supabase/client'
 
 export default function PlayersPage() {
   const [players, setPlayers] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [filterTier, setFilterTier] = useState<string>('')
 
-  // 🔥 localStorage에서 불러오기
-  useEffect(() => {
-    const saved = localStorage.getItem('auction_players')
-    const parsed = saved ? JSON.parse(saved) : []
+  const loadPlayers = async () => {
+    const { data, error } = await supabase
+      .from('players')
+      .select('*')
+      .order('id', { ascending: true })
 
-    setPlayers(parsed)
+    if (error) {
+      console.error('플레이어 불러오기 실패:', error)
+      return
+    }
+
+    setPlayers(data || [])
+  }
+
+  useEffect(() => {
+    loadPlayers()
+
+    const channel = supabase
+      .channel('players-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'players',
+        },
+        () => {
+          loadPlayers()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   const filteredPlayers = players.filter(player => {
-    const matchesSearch = player.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesSearch = player.name?.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesTier = !filterTier || player.tier === filterTier
     return matchesSearch && matchesTier
   })
@@ -36,7 +66,6 @@ export default function PlayersPage() {
     <main className="min-h-screen p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
 
-        {/* Header */}
         <div className="flex items-center gap-4">
           <Link href="/">
             <Button variant="ghost" size="icon">
@@ -51,7 +80,6 @@ export default function PlayersPage() {
           </div>
         </div>
 
-        {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-card border border-border rounded-lg p-4">
             <p className="text-muted-foreground text-xl">전체</p>
@@ -65,7 +93,6 @@ export default function PlayersPage() {
           ))}
         </div>
 
-        {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -97,7 +124,6 @@ export default function PlayersPage() {
           </div>
         </div>
 
-        {/* Players */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {filteredPlayers.map(player => (
             <div
@@ -113,7 +139,7 @@ export default function PlayersPage() {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-3xl font-bold text-muted-foreground">
-                    {player.name[0]}
+                    {player.name?.[0] || '?'}
                   </div>
                 )}
 

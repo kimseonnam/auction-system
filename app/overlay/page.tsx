@@ -36,6 +36,7 @@ type LocalPlayer = {
   isPassed?: boolean
   is_captain?: boolean
   isCaptain?: boolean
+  auction_order?: number | null
 }
 
 type LocalLandmark = {
@@ -51,6 +52,7 @@ type LocalLandmark = {
   isPassed?: boolean
   category?: string
   map?: string
+  auction_order?: number | null
 }
 
 type LocalAuctionState = {
@@ -506,7 +508,11 @@ export default function OverlayPage() {
 
     const [playersResult, teamsResult, auctionStateResult, logsResult, landmarksResult, landmarkStateResult] =
       await Promise.all([
-        supabase.from('players').select('*').order('id', { ascending: true }),
+        supabase
+          .from('players')
+          .select('*')
+          .order('auction_order', { ascending: true, nullsFirst: false })
+          .order('id', { ascending: true }),
         supabase.from('teams').select('*').order('id', { ascending: true }),
         supabase.from('auction_state').select('*').eq('id', 'main').maybeSingle(),
         supabase
@@ -515,7 +521,11 @@ export default function OverlayPage() {
           .in('action', ['bid', 'sold', 'passed'])
           .order('created_at', { ascending: false })
           .limit(30),
-        supabase.from('landmarks').select('*').order('id', { ascending: true }),
+        supabase
+          .from('landmarks')
+          .select('*')
+          .order('auction_order', { ascending: true, nullsFirst: false })
+          .order('id', { ascending: true }),
         supabase.from('landmark_auction_state').select('*').eq('id', 'main').maybeSingle(),
       ])
 
@@ -684,7 +694,12 @@ export default function OverlayPage() {
   const currentBidderTeam = safeTeams.find((team) => team.id === auctionState.current_bidder_team_id)
 
   const availablePlayers = auctionPlayers.filter((player) => !player.team_id && !player.is_passed)
-  const queuePlayers = auctionPlayers
+  const orderedQueuePlayers = currentPlayer
+    ? [
+        currentPlayer,
+        ...availablePlayers.filter((player) => player.id !== currentPlayer.id),
+      ]
+    : availablePlayers
   const passedPlayers = auctionPlayers.filter((player) => player.is_passed)
   const soldPlayers = auctionPlayers.filter((player) => player.team_id)
   const totalPlayers = auctionPlayers.length
@@ -701,6 +716,12 @@ export default function OverlayPage() {
   const currentLandmark = safeLandmarks.find((landmark) => landmark.id === landmarkAuctionState.current_landmark_id)
   const currentLandmarkBidderTeam = safeTeams.find((team) => team.id === landmarkAuctionState.current_bidder_team_id)
   const availableLandmarks = safeLandmarks.filter((landmark) => !landmark.team_id && !landmark.is_passed)
+  const orderedQueueLandmarks = currentLandmark
+    ? [
+        currentLandmark,
+        ...availableLandmarks.filter((landmark) => landmark.id !== currentLandmark.id),
+      ]
+    : availableLandmarks
   const nextLandmark = (() => {
     const currentIndex = currentLandmark
       ? availableLandmarks.findIndex((landmark) => landmark.id === currentLandmark.id)
@@ -914,11 +935,11 @@ export default function OverlayPage() {
                   </div>
 
                   <div className="grid grid-cols-8 gap-2.5 overflow-hidden content-start">
-                    {safeLandmarks.map((landmark) => (
+                    {orderedQueueLandmarks.map((landmark, index) => (
                       <LandmarkMiniCard
                         key={landmark.id}
                         landmark={landmark}
-                        isCurrent={landmark.id === currentLandmark?.id}
+                        isCurrent={index === 0}
                         isPassed={Boolean(landmark.is_passed)}
                         isSold={Boolean(landmark.team_id)}
                       />
@@ -1149,11 +1170,11 @@ export default function OverlayPage() {
                 </div>
 
                 <div className="grid grid-cols-10 gap-2.5 overflow-hidden content-start">
-                  {queuePlayers.map((player) => (
+                  {orderedQueuePlayers.map((player, index) => (
                     <PlayerMiniCard
                       key={player.id}
                       player={player}
-                      isCurrent={player.id === currentPlayer?.id}
+                      isCurrent={index === 0}
                       isPassed={player.is_passed}
                       isSold={Boolean(player.team_id)}
                     />

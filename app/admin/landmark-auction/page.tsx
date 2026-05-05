@@ -26,6 +26,7 @@ type LocalLandmark = {
   is_passed?: boolean
   category?: string
   map?: string
+  auction_order?: number | null
 }
 
 type LocalTeam = {
@@ -296,6 +297,9 @@ const makeLandmarkPayload = (landmark: LocalLandmark) => ({
   is_passed: Boolean(landmark.is_passed),
   category: landmark.category || landmark.map || '랜드마크',
   map: landmark.map || landmark.category || '랜드마크',
+  auction_order: Number.isFinite(Number(landmark.auction_order))
+    ? Number(landmark.auction_order)
+    : null,
 })
 
 const makeTeamPayload = (team: LocalTeam) => ({
@@ -369,7 +373,11 @@ export default function LandmarkAuctionPage() {
 
     const [teamsResult, landmarksResult, stateResult, logsResult] = await Promise.all([
       supabase.from('teams').select('*').order('id', { ascending: true }),
-      supabase.from('landmarks').select('*').order('id', { ascending: true }),
+      supabase
+        .from('landmarks')
+        .select('*')
+        .order('auction_order', { ascending: true, nullsFirst: false })
+        .order('id', { ascending: true }),
       supabase.from('landmark_auction_state').select('*').eq('id', 'main').maybeSingle(),
       supabase
         .from('auction_logs')
@@ -546,6 +554,13 @@ export default function LandmarkAuctionPage() {
     (team) => team.id === auctionState.current_bidder_team_id
   )
   const passedLandmarks = safeLandmarks.filter((landmark) => landmark.is_passed)
+  const waitingLandmarks = safeLandmarks.filter(isAuctionTargetLandmark)
+  const orderedLandmarks = currentLandmark
+    ? [
+        currentLandmark,
+        ...waitingLandmarks.filter((landmark) => landmark.id !== currentLandmark.id),
+      ]
+    : waitingLandmarks
 
   const getAvailableLandmarks = useCallback(() => {
     return landmarksRef.current.filter(isAuctionTargetLandmark)
@@ -702,6 +717,16 @@ export default function LandmarkAuctionPage() {
     const safeAmount = Number(amount)
 
     if (!isAdmin && joinedTeamId !== latestTeam.id) return
+
+    const wonLandmarkCount = landmarksRef.current.filter(
+      (landmark) => landmark.team_id === latestTeam.id
+    ).length
+
+    if (wonLandmarkCount >= 2) {
+      alert('이미 랜드마크 2개를 가져간 팀은 더 이상 입찰할 수 없습니다.')
+      return
+    }
+
     if (!Number.isFinite(safeAmount) || safeAmount <= 0) return
     if (!currentState.current_landmark_id) {
       alert('현재 경매 중인 랜드마크가 없습니다.')
@@ -880,7 +905,17 @@ export default function LandmarkAuctionPage() {
       ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
     }
 
-    const nextLandmarks = [...shuffled, ...unavailableLandmarks]
+    const orderedAvailableLandmarks = shuffled.map((landmark, index) => ({
+      ...landmark,
+      auction_order: index + 1,
+    }))
+
+    const orderedUnavailableLandmarks = unavailableLandmarks.map((landmark, index) => ({
+      ...landmark,
+      auction_order: orderedAvailableLandmarks.length + index + 1,
+    }))
+
+    const nextLandmarks = [...orderedAvailableLandmarks, ...orderedUnavailableLandmarks]
 
     await saveLandmarks(nextLandmarks)
     await clearAuctionLogs()
@@ -1104,16 +1139,14 @@ export default function LandmarkAuctionPage() {
             </div>
 
             <div className="grid grid-cols-6 gap-3">
-              {safeLandmarks
-                .filter(isAuctionTargetLandmark)
-                .map((landmark) => (
+              {orderedLandmarks.map((landmark, index) => (
                   <button
                     key={landmark.id}
                     type="button"
                     onClick={() => handleSelectLandmark(landmark)}
                     disabled={!isAdmin}
                     className={`relative h-24 min-w-24 overflow-hidden rounded-lg border bg-secondary transition-all ${
-                      landmark.id === currentLandmark?.id
+                      index === 0
                         ? 'border-primary ring-2 ring-primary'
                         : 'border-border'
                     } ${isAdmin ? 'cursor-pointer' : 'cursor-default'}`}
@@ -1242,7 +1275,11 @@ export default function LandmarkAuctionPage() {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready' || (!isAdmin && joinedTeamId !== team.id)}
+                  disabled={
+                    auctionState.status === 'ready' ||
+                    (!isAdmin && joinedTeamId !== team.id) ||
+                    safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)).length >= 2
+                  }
                 />
               ))}
             </div>
@@ -1307,7 +1344,11 @@ export default function LandmarkAuctionPage() {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready' || (!isAdmin && joinedTeamId !== team.id)}
+                  disabled={
+                    auctionState.status === 'ready' ||
+                    (!isAdmin && joinedTeamId !== team.id) ||
+                    safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)).length >= 2
+                  }
                 />
               ))}
             </div>

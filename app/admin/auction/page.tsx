@@ -28,6 +28,7 @@ type LocalPlayer = {
   bid_amount: number
   is_passed: boolean
   is_captain?: boolean
+  auction_order?: number | null
 }
 
 type LocalTeam = {
@@ -237,7 +238,11 @@ export default function AuctionPage() {
 
   const loadAuctionData = useCallback(async () => {
     const [playersResult, teamsResult, stateResult, logsResult] = await Promise.all([
-      supabase.from('players').select('*').order('id', { ascending: true }),
+      supabase
+        .from('players')
+        .select('*')
+        .order('auction_order', { ascending: true, nullsFirst: false })
+        .order('id', { ascending: true }),
       supabase.from('teams').select('*').order('id', { ascending: true }),
       supabase.from('auction_state').select('*').eq('id', 'main').maybeSingle(),
       supabase
@@ -419,6 +424,13 @@ export default function AuctionPage() {
   const currentPlayer = auctionPlayers.find((p) => p.id === auctionState.current_player_id)
   const currentBidderTeam = teams.find((t) => t.id === auctionState.current_bidder_team_id)
   const passedPlayers = auctionPlayers.filter((p) => p.is_passed)
+  const waitingPlayers = players.filter(isAuctionTargetPlayer)
+  const orderedWaitingPlayers = currentPlayer
+  ? [
+      currentPlayer,
+      ...waitingPlayers.filter((player) => player.id !== currentPlayer.id),
+    ]
+  : waitingPlayers
 
   const openPointPanel = () => {
     const drafts = teams.reduce<Record<string, string>>((acc, team) => {
@@ -750,6 +762,15 @@ export default function AuctionPage() {
       return
     }
 
+    const wonPlayerCount = playersRef.current.filter(
+      (player) => player.team_id === team.id && !player.is_captain
+    ).length
+
+    if (wonPlayerCount >= 3) {
+      alert('이미 플레이어 3명을 낙찰받은 팀은 더 이상 입찰할 수 없습니다.')
+      return
+    }
+
     if (amount <= auctionState.current_bid) return
     if (team.points < amount) return
 
@@ -837,7 +858,17 @@ export default function AuctionPage() {
       ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
     }
 
-    const nextPlayers = [...shuffled, ...unavailablePlayers]
+    const orderedAvailablePlayers = shuffled.map((player, index) => ({
+      ...player,
+      auction_order: index + 1,
+    }))
+
+    const orderedUnavailablePlayers = unavailablePlayers.map((player, index) => ({
+      ...player,
+      auction_order: orderedAvailablePlayers.length + index + 1,
+    }))
+
+    const nextPlayers = [...orderedAvailablePlayers, ...orderedUnavailablePlayers]
 
     await savePlayers(nextPlayers)
 
@@ -1123,23 +1154,21 @@ export default function AuctionPage() {
               </span>
             </div>
 
-            <div className="grid grid-cols-10 gap-3">
-              {players
-                .filter(isAuctionTargetPlayer)
-                .map((player) => (
-                  <button
-                    key={player.id}
-                    type="button"
-                    onClick={() => handleSelectPlayer(player)}
-                    disabled={!isAdmin}
-                    className={`relative aspect-square overflow-hidden rounded-lg border bg-secondary transition-all ${
-                      player.id === currentPlayer?.id
-                        ? 'border-primary ring-2 ring-primary'
-                        : 'border-border'
-                    } ${player.is_passed ? 'opacity-40' : ''} ${
-                      isAdmin ? 'cursor-pointer' : 'cursor-default'
-                    }`}
-                  >
+          <div className="grid grid-cols-10 gap-3">
+            {orderedWaitingPlayers.map((player, index) => (
+              <button
+                key={player.id}
+                type="button"
+                onClick={() => handleSelectPlayer(player)}
+                disabled={!isAdmin}
+                className={`relative aspect-square overflow-hidden rounded-lg border bg-secondary transition-all ${
+            index === 0
+            ? 'border-primary ring-2 ring-primary'
+            : 'border-border'
+           } ${player.is_passed ? 'opacity-40' : ''} ${
+              isAdmin ? 'cursor-pointer' : 'cursor-default'
+             }`}
+            >
                     {player.image_url ? (
                       <img src={player.image_url} alt={player.name} className="h-full w-full object-cover" />
                     ) : (
@@ -1273,8 +1302,15 @@ export default function AuctionPage() {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready' || (!isAdmin && participantTeamId !== team.id)}
-                  canBid={isAdmin || participantTeamId === team.id}
+                  disabled={
+                    auctionState.status === 'ready' ||
+                    (!isAdmin && participantTeamId !== team.id) ||
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3
+                  }
+                  canBid={
+                    (isAdmin || participantTeamId === team.id) &&
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3
+                  }
                   isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
               ))}
@@ -1332,8 +1368,15 @@ export default function AuctionPage() {
                   onBid={(amount) => handleBid(team, amount)}
                   currentBid={auctionState.current_bid}
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
-                  disabled={auctionState.status === 'ready' || (!isAdmin && participantTeamId !== team.id)}
-                  canBid={isAdmin || participantTeamId === team.id}
+                  disabled={
+                    auctionState.status === 'ready' ||
+                    (!isAdmin && participantTeamId !== team.id) ||
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3
+                  }
+                  canBid={
+                    (isAdmin || participantTeamId === team.id) &&
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3
+                  }
                   isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
               ))}
