@@ -283,18 +283,10 @@ export default function ParticipantPage() {
     : []
 
   const canBidPlayer = Boolean(
-    joinedTeam &&
-    currentPlayer &&
-    playerState.status === 'running' &&
-    playerState.timer_remaining > 0 &&
-    myPlayers.length < 3
+    joinedTeam && currentPlayer && playerState.status !== 'ready' && myPlayers.length < 3
   )
   const canBidLandmark = Boolean(
-    joinedTeam &&
-    currentLandmark &&
-    landmarkState.status === 'running' &&
-    landmarkState.timer_remaining > 0 &&
-    myLandmarks.length < 2
+    joinedTeam && currentLandmark && landmarkState.status !== 'ready' && myLandmarks.length < 2
   )
 
 
@@ -317,6 +309,9 @@ export default function ParticipantPage() {
         ...availableLandmarks.filter((landmark) => landmark.id !== currentLandmark.id),
       ]
     : availableLandmarks
+
+  const passedPlayers = auctionPlayers.filter((player) => player.is_passed)
+  const passedLandmarks = landmarks.filter((landmark) => landmark.is_passed)
 
   const releaseTeamConnection = useCallback(
     async (targetTeamId?: string | null) => {
@@ -482,8 +477,8 @@ export default function ParticipantPage() {
           alert('이미 랜드마크 2개를 가져간 팀은 더 이상 입찰할 수 없습니다.')
           return
         }
-        if (landmarkState.status !== 'running' || landmarkState.timer_remaining <= 0) {
-          alert('입찰 시간이 종료되었습니다.')
+        if (landmarkState.status === 'ready') {
+          alert('경매 시작 후 입찰할 수 있습니다.')
           return
         }
         if (amount <= landmarkState.current_bid) return
@@ -522,8 +517,8 @@ export default function ParticipantPage() {
         alert('이미 플레이어 3명을 낙찰받은 팀은 더 이상 입찰할 수 없습니다.')
         return
       }
-      if (playerState.status !== 'running' || playerState.timer_remaining <= 0) {
-        alert('입찰 시간이 종료되었습니다.')
+      if (playerState.status === 'ready') {
+        alert('경매 시작 후 입찰할 수 있습니다.')
         return
       }
       if (amount <= playerState.current_bid) return
@@ -567,6 +562,16 @@ export default function ParticipantPage() {
 
   return (
     <main className="min-h-screen bg-background p-4 text-white">
+      <style jsx global>{`
+        .hidden-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+
+        .hidden-scrollbar::-webkit-scrollbar {
+          display: none;
+        }
+      `}</style>
       <div className="mx-auto max-w-[1540px] space-y-4">
         <header className="flex items-center justify-between border-b border-border pb-4">
           <div className="flex items-center gap-3">
@@ -576,7 +581,7 @@ export default function ParticipantPage() {
               </Button>
             </Link>
             <div>
-              <h1 className="text-2xl font-black">경매 참가자</h1>
+              <h1 className="text-2xl font-black">참가자</h1>
               <p className="text-sm text-muted-foreground">팀 코드 1번 입력 후 인원/랜드마크 경매를 여기서 입찰합니다.</p>
             </div>
           </div>
@@ -589,7 +594,7 @@ export default function ParticipantPage() {
 
         {!joinedTeam ? (
           <section className="rounded-xl border border-border bg-card p-5">
-            <h2 className="mb-3 text-xl font-black text-primary">팀 코드 입력</h2>
+            <h2 className="mb-3 text-xl font-black">팀 코드 입력</h2>
             <div className="flex flex-wrap items-center gap-3">
               <input
                 value={codeInput}
@@ -723,7 +728,8 @@ export default function ParticipantPage() {
               </span>
             </div>
 
-            <div className="grid grid-cols-10 gap-2.5 content-start">
+            <div className="hidden-scrollbar h-[310px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-10 gap-2.5 content-start">
               {mode === 'landmark' ? (
                 orderedQueueLandmarks.length > 0 ? (
                   orderedQueueLandmarks.map((landmark, index) => (
@@ -747,10 +753,46 @@ export default function ParticipantPage() {
               ) : (
                 <p className="col-span-full py-10 text-center text-muted-foreground">대기 중인 선수가 없습니다.</p>
               )}
+              </div>
             </div>
           </div>
 
-          <div className="col-span-12 rounded-xl border border-border bg-card p-5 lg:col-span-5">
+          <div className="col-span-12 rounded-xl border border-border bg-card p-5 lg:col-span-2">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xl font-black">
+                {mode === 'landmark' ? '유찰 랜드마크' : '유찰자 목록'}
+              </h2>
+              <span className="text-sm font-bold text-muted-foreground">
+                {mode === 'landmark' ? `${passedLandmarks.length}개` : `${passedPlayers.length}명`}
+              </span>
+            </div>
+
+            <div className="hidden-scrollbar h-[310px] space-y-2 overflow-y-auto pr-1">
+              {mode === 'landmark' ? (
+                passedLandmarks.length > 0 ? (
+                  passedLandmarks.map((landmark) => (
+                    <div key={landmark.id} className="rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-2">
+                      <p className="truncate text-xs font-black text-primary">{getLandmarkMapName(landmark)}</p>
+                      <p className="truncate text-sm font-black text-white">{landmark.name}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="py-8 text-center text-sm text-muted-foreground">아직 유찰 랜드마크 없음</p>
+                )
+              ) : passedPlayers.length > 0 ? (
+                passedPlayers.map((player) => (
+                  <div key={player.id} className="flex items-center justify-between rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-2">
+                    <span className="truncate text-sm font-black text-white">{player.name}</span>
+                    <span className={`ml-2 shrink-0 text-xs font-black ${getTierColorClass(player.tier)}`}>{player.tier}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="py-8 text-center text-sm text-muted-foreground">아직 유찰자 없음</p>
+              )}
+            </div>
+          </div>
+
+          <div className="col-span-12 rounded-xl border border-border bg-card p-5 lg:col-span-3">
             <h2 className="mb-3 text-xl font-black">경매 로그</h2>
             <div className="max-h-[310px] space-y-1 overflow-y-auto text-sm font-bold">
               {logs.length > 0 ? logs.map((log) => (

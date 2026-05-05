@@ -1156,7 +1156,9 @@ export default function AuctionPage() {
 
             <div className="mt-5 text-center">
               <p className="text-xs text-muted-foreground">남은 시간</p>
-              <p className="text-6xl font-black text-white">{auctionState.timer_remaining}</p>
+              <p className="text-6xl font-black text-white">
+                {currentPlayer ? auctionState.timer_remaining : DEFAULT_TIMER}
+              </p>
               <p className="text-xs text-muted-foreground">초</p>
             </div>
           </section>
