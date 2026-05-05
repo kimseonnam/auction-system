@@ -109,7 +109,7 @@ export default function HomePage() {
           </div>
 
           <div className="mt-6 text-center text-sm text-muted-foreground">
-            관리자 코드는 문의주세요.
+            치지직 김선남 문의
           </div>
         </div>
       </main>
@@ -217,7 +217,7 @@ export default function HomePage() {
 
         <div className="text-center text-sm text-muted-foreground">
           <code className="rounded-lg bg-secondary px-3 py-2">
-            관리자 코드는 문의주세요.
+            치지직 김선남 문의
           </code>
         </div>
       </div>
