@@ -627,6 +627,7 @@ export default function ParticipantPage() {
             <h2 className="mb-3 text-xl font-black">팀 코드 입력</h2>
             <div className="flex flex-wrap items-center gap-3">
               <input
+                type="password"
                 value={codeInput}
                 onChange={(e) => {
                   setCodeInput(e.target.value)
