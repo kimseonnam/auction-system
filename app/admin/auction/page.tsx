@@ -119,6 +119,14 @@ const defaultAuctionState: LocalAuctionState = {
 const isAuctionTargetPlayer = (player: LocalPlayer) =>
   !player.team_id && !player.is_passed && !player.is_captain
 
+const hasSameTierPlayer = (
+  ownedPlayers: LocalPlayer[],
+  targetPlayer?: LocalPlayer | null
+) => {
+  if (!targetPlayer?.tier) return false
+  return ownedPlayers.some((player) => player.tier === targetPlayer.tier)
+}
+
 const getTeamNumber = (teamId?: string | null) => {
   if (!teamId) return null
   const match = teamId.match(/team-(\d+)/)
@@ -781,6 +789,18 @@ export default function AuctionPage() {
       return
     }
 
+    const ownedPlayers = playersRef.current.filter(
+      (player) => player.team_id === team.id && !player.is_captain
+    )
+    const currentAuctionPlayer = playersRef.current.find(
+      (player) => player.id === auctionState.current_player_id
+    )
+
+    if (hasSameTierPlayer(ownedPlayers, currentAuctionPlayer)) {
+      alert('이미 같은 티어의 선수를 낙찰받은 팀은 입찰할 수 없습니다.')
+      return
+    }
+
     if (auctionState.status !== 'running' || auctionState.timer_remaining <= 0) {
       alert('입찰 시간이 종료되었습니다.')
       return
@@ -1322,11 +1342,19 @@ export default function AuctionPage() {
                   disabled={
                     auctionState.status === 'ready' ||
                     (!isAdmin && participantTeamId !== team.id) ||
-                    players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3 ||
+                    hasSameTierPlayer(
+                      players.filter((p) => p.team_id === team.id && !p.is_captain),
+                      currentPlayer
+                    )
                   }
                   canBid={
                     (isAdmin || participantTeamId === team.id) &&
-                    players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3 &&
+                    !hasSameTierPlayer(
+                      players.filter((p) => p.team_id === team.id && !p.is_captain),
+                      currentPlayer
+                    )
                   }
                   isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
@@ -1398,11 +1426,19 @@ export default function AuctionPage() {
                   disabled={
                     auctionState.status === 'ready' ||
                     (!isAdmin && participantTeamId !== team.id) ||
-                    players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3 ||
+                    hasSameTierPlayer(
+                      players.filter((p) => p.team_id === team.id && !p.is_captain),
+                      currentPlayer
+                    )
                   }
                   canBid={
                     (isAdmin || participantTeamId === team.id) &&
-                    players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3
+                    players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3 &&
+                    !hasSameTierPlayer(
+                      players.filter((p) => p.team_id === team.id && !p.is_captain),
+                      currentPlayer
+                    )
                   }
                   isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
@@ -1445,7 +1481,7 @@ function TeamBidCard({
     }
 
     if (!canBid) {
-      alert('본인 팀만 입찰할 수 있습니다.')
+      alert('본인 팀만 입찰할 수 있거나, 같은 티어 중복 제한으로 입찰할 수 없습니다.')
       return
     }
 

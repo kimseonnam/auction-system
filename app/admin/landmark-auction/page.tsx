@@ -284,6 +284,19 @@ const getTeamNumber = (teamId?: string | null) => {
   return match ? Number(match[1]) : 9999
 }
 
+const getLandmarkMapName = (landmark?: LocalLandmark | null) =>
+  landmark?.category || landmark?.map || '랜드마크'
+
+const hasSameMapLandmark = (
+  ownedLandmarks: LocalLandmark[],
+  targetLandmark?: LocalLandmark | null
+) => {
+  const targetMap = getLandmarkMapName(targetLandmark).trim()
+  if (!targetMap) return false
+
+  return ownedLandmarks.some((landmark) => getLandmarkMapName(landmark).trim() === targetMap)
+}
+
 
 const isAuctionTargetLandmark = (landmark: LocalLandmark) =>
   !landmark.team_id && !landmark.is_passed
@@ -730,6 +743,18 @@ export default function LandmarkAuctionPage() {
 
     if (wonLandmarkCount >= 2) {
       alert('이미 랜드마크 2개를 가져간 팀은 더 이상 입찰할 수 없습니다.')
+      return
+    }
+
+    const ownedLandmarks = landmarksRef.current.filter(
+      (landmark) => landmark.team_id === latestTeam.id
+    )
+    const currentAuctionLandmark = landmarksRef.current.find(
+      (landmark) => landmark.id === currentState.current_landmark_id
+    )
+
+    if (hasSameMapLandmark(ownedLandmarks, currentAuctionLandmark)) {
+      alert('이미 같은 맵의 랜드마크를 가져간 팀은 입찰할 수 없습니다.')
       return
     }
 
@@ -1284,7 +1309,11 @@ export default function LandmarkAuctionPage() {
                   disabled={
                     auctionState.status === 'ready' ||
                     (!isAdmin && joinedTeamId !== team.id) ||
-                    safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)).length >= 2
+                    safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)).length >= 2 ||
+                    hasSameMapLandmark(
+                      safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)),
+                      currentLandmark
+                    )
                   }
                 />
               ))}
@@ -1363,7 +1392,11 @@ export default function LandmarkAuctionPage() {
                   disabled={
                     auctionState.status === 'ready' ||
                     (!isAdmin && joinedTeamId !== team.id) ||
-                    safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)).length >= 2
+                    safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)).length >= 2 ||
+                    hasSameMapLandmark(
+                      safeLandmarks.filter((landmark) => landmark.team_id === team.id || team.landmarks?.includes(landmark.id)),
+                      currentLandmark
+                    )
                   }
                 />
               ))}

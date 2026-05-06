@@ -5,7 +5,9 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase/client'
-import { ArrowLeft, Plus, Pencil, Trash2, X, Map } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Trash2, X, Map, Upload } from 'lucide-react'
+
+const LANDMARK_IMAGE_BUCKET = 'landmark-images'
 
 type LocalLandmark = {
   id: string
@@ -100,6 +102,28 @@ export default function LandmarksManagePage() {
     }
   }, [loadLandmarks])
 
+  const handleDeleteAll = async () => {
+    if (landmarks.length === 0) return
+    if (!confirm('등록된 모든 랜드마크를 삭제하시겠습니까?')) return
+
+    const previousLandmarks = landmarks
+    setLandmarks([])
+    syncLocalStorage([])
+
+    const { error } = await supabase
+      .from('landmarks')
+      .delete()
+      .neq('id', '')
+
+    if (error) {
+      console.error('landmarks delete all error:', error)
+      alert('전체 삭제 중 오류가 발생했습니다.')
+      setLandmarks(previousLandmarks)
+      syncLocalStorage(previousLandmarks)
+      await loadLandmarks()
+    }
+  }
+
   const handleDelete = async (landmark: LocalLandmark) => {
     if (!confirm(`${landmark.map_name} - ${landmark.region}을(를) 삭제하시겠습니까?`)) return
 
@@ -188,10 +212,22 @@ export default function LandmarksManagePage() {
             </div>
           </div>
 
-          <Button onClick={() => setShowAddModal(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            랜드마크 추가
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="destructive"
+              onClick={handleDeleteAll}
+              disabled={landmarks.length === 0}
+              title={landmarks.length === 0 ? '삭제할 랜드마크가 없습니다.' : '등록된 랜드마크 전체 제거'}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              전체 제거
+            </Button>
+
+            <Button onClick={() => setShowAddModal(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              랜드마크 추가
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -219,13 +255,29 @@ export default function LandmarksManagePage() {
                       key={landmark.id}
                       className="flex items-center justify-between p-4 hover:bg-secondary/50"
                     >
-                      <div>
-                        <span className="font-bold">{landmark.region}</span>
-                        {(landmark.team_id || landmark.is_passed) && (
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            {landmark.team_id ? '낙찰됨' : '유찰됨'}
-                          </span>
-                        )}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-secondary">
+                          {landmark.image_url ? (
+                            <img
+                              src={landmark.image_url}
+                              alt={landmark.region}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-sm font-black text-muted-foreground">
+                              {landmark.region[0]}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="min-w-0">
+                          <span className="block truncate font-bold">{landmark.region}</span>
+                          {(landmark.team_id || landmark.is_passed) && (
+                            <span className="text-xs text-muted-foreground">
+                              {landmark.team_id ? '낙찰됨' : '유찰됨'}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -298,7 +350,40 @@ function LandmarkModal({
   const [loading, setLoading] = useState(false)
   const [mapName, setMapName] = useState(landmark?.map_name || '')
   const [region, setRegion] = useState(landmark?.region || '')
+  const [imageUrl, setImageUrl] = useState(landmark?.image_url || '')
+  const [imageFile, setImageFile] = useState<File | null>(null)
   const [useExistingMap, setUseExistingMap] = useState(false)
+
+  const uploadImageIfNeeded = async () => {
+    if (!imageFile) return imageUrl || null
+
+    const rawExt = imageFile.name.split('.').pop()?.toLowerCase() || 'png'
+    const fileExt = rawExt.replace(/[^a-z0-9]/g, '') || 'png'
+    const fileName = `${crypto.randomUUID()}.${fileExt}`
+    const filePath = `landmarks/${fileName}`
+
+    const { error: uploadError } = await supabase.storage
+      .from(LANDMARK_IMAGE_BUCKET)
+      .upload(filePath, imageFile, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: imageFile.type || 'image/png',
+      })
+
+    if (uploadError) {
+      throw new Error(`Storage 업로드 실패: ${uploadError.message}`)
+    }
+
+    const { data } = supabase.storage
+      .from(LANDMARK_IMAGE_BUCKET)
+      .getPublicUrl(filePath)
+
+    if (!data.publicUrl) {
+      throw new Error('Storage 공개 URL을 가져오지 못했습니다.')
+    }
+
+    return data.publicUrl
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -307,19 +392,27 @@ function LandmarkModal({
 
     setLoading(true)
 
-    await onSave(
-      {
-        map_name: mapName.trim(),
-        region: region.trim(),
-        image_url: landmark?.image_url || null,
-        team_id: landmark?.team_id || null,
-        bid_amount: landmark?.bid_amount || 0,
-        is_passed: landmark?.is_passed || false,
-      },
-      landmark?.id
-    )
+    try {
+      const uploadedImageUrl = await uploadImageIfNeeded()
 
-    setLoading(false)
+      await onSave(
+        {
+          map_name: mapName.trim(),
+          region: region.trim(),
+          image_url: uploadedImageUrl,
+          team_id: landmark?.team_id || null,
+          bid_amount: landmark?.bid_amount || 0,
+          is_passed: landmark?.is_passed || false,
+        },
+        landmark?.id
+      )
+    } catch (error) {
+      console.error('landmark image upload/save error:', error)
+      const message = error instanceof Error ? error.message : '알 수 없는 오류'
+      alert(`이미지 업로드 또는 저장 중 오류가 발생했습니다.\n\n${message}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -391,6 +484,37 @@ function LandmarkModal({
               placeholder="예: 학파트, 서버니, 페카도"
               required
             />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">랜드마크 이미지</label>
+
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border bg-secondary/40 px-4 py-6 text-sm font-bold hover:bg-secondary">
+              <Upload className="h-4 w-4" />
+              이미지 선택
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+
+                  setImageFile(file)
+                  setImageUrl(URL.createObjectURL(file))
+                }}
+              />
+            </label>
+
+            {imageUrl && (
+              <div className="overflow-hidden rounded-md border border-border bg-secondary">
+                <img
+                  src={imageUrl}
+                  alt="랜드마크 미리보기"
+                  className="h-40 w-full object-cover"
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2 pt-4">

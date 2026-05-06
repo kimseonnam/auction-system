@@ -143,6 +143,18 @@ const getTierColorClass = (tier?: string) => {
   }
 }
 
+const hasSameTierPlayer = (ownedPlayers: LocalPlayer[], targetPlayer?: LocalPlayer | null) => {
+  if (!targetPlayer?.tier) return false
+  return ownedPlayers.some((player) => player.tier === targetPlayer.tier)
+}
+
+const hasSameMapLandmark = (ownedLandmarks: LocalLandmark[], targetLandmark?: LocalLandmark | null) => {
+  const targetMap = getLandmarkMapName(targetLandmark).trim()
+  if (!targetMap) return false
+
+  return ownedLandmarks.some((landmark) => getLandmarkMapName(landmark).trim() === targetMap)
+}
+
 export default function ParticipantPage() {
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [players, setPlayers] = useState<LocalPlayer[]>([])
@@ -283,10 +295,20 @@ export default function ParticipantPage() {
     : []
 
   const canBidPlayer = Boolean(
-    joinedTeam && currentPlayer && playerState.status !== 'ready' && myPlayers.length < 3
+    joinedTeam &&
+    currentPlayer &&
+    playerState.status === 'running' &&
+    playerState.timer_remaining > 0 &&
+    myPlayers.length < 3 &&
+    !hasSameTierPlayer(myPlayers, currentPlayer)
   )
   const canBidLandmark = Boolean(
-    joinedTeam && currentLandmark && landmarkState.status !== 'ready' && myLandmarks.length < 2
+    joinedTeam &&
+    currentLandmark &&
+    landmarkState.status === 'running' &&
+    landmarkState.timer_remaining > 0 &&
+    myLandmarks.length < 2 &&
+    !hasSameMapLandmark(myLandmarks, currentLandmark)
   )
 
 
@@ -477,8 +499,12 @@ export default function ParticipantPage() {
           alert('이미 랜드마크 2개를 가져간 팀은 더 이상 입찰할 수 없습니다.')
           return
         }
-        if (landmarkState.status === 'ready') {
-          alert('경매 시작 후 입찰할 수 있습니다.')
+        if (hasSameMapLandmark(myLandmarks, currentLandmark)) {
+          alert('이미 같은 맵의 랜드마크를 가져간 팀은 입찰할 수 없습니다.')
+          return
+        }
+        if (landmarkState.status !== 'running' || landmarkState.timer_remaining <= 0) {
+          alert('입찰 시간이 종료되었습니다.')
           return
         }
         if (amount <= landmarkState.current_bid) return
@@ -517,8 +543,12 @@ export default function ParticipantPage() {
         alert('이미 플레이어 3명을 낙찰받은 팀은 더 이상 입찰할 수 없습니다.')
         return
       }
-      if (playerState.status === 'ready') {
-        alert('경매 시작 후 입찰할 수 있습니다.')
+      if (hasSameTierPlayer(myPlayers, currentPlayer)) {
+        alert('이미 같은 티어의 선수를 낙찰받은 팀은 입찰할 수 없습니다.')
+        return
+      }
+      if (playerState.status !== 'running' || playerState.timer_remaining <= 0) {
+        alert('입찰 시간이 종료되었습니다.')
         return
       }
       if (amount <= playerState.current_bid) return
@@ -678,7 +708,14 @@ export default function ParticipantPage() {
 
               <div className="rounded-lg border border-border bg-background/50 p-3 text-sm font-bold text-muted-foreground">
                 <p>상태: {activeStatus === 'running' ? '진행중' : activeStatus === 'paused' ? '정지' : '대기'}</p>
-                <p>인원 경매는 팀당 3명, 랜드마크 경매는 팀당 2개까지만 입찰할 수 있습니다.</p>
+                <p>인원 경매는 팀당 3명, 같은 티어는 1명까지만 입찰할 수 있습니다.</p>
+                <p>랜드마크 경매는 팀당 2개, 같은 맵은 1개까지만 입찰할 수 있습니다.</p>
+                {joinedTeam && mode !== 'landmark' && currentPlayer && hasSameTierPlayer(myPlayers, currentPlayer) && (
+                  <p className="mt-1 text-primary">현재 선수와 같은 티어를 이미 보유 중이라 입찰할 수 없습니다.</p>
+                )}
+                {joinedTeam && mode === 'landmark' && currentLandmark && hasSameMapLandmark(myLandmarks, currentLandmark) && (
+                  <p className="mt-1 text-primary">현재 랜드마크와 같은 맵을 이미 보유 중이라 입찰할 수 없습니다.</p>
+                )}
               </div>
             </div>
           </div>
