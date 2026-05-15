@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Users, Settings, Monitor, Gavel, Lock, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { supabase } from '@/lib/supabase/client'
 
 type AuctionRole = 'admin' | 'participant'
 
@@ -19,20 +20,29 @@ export default function HomePage() {
 
   useEffect(() => {
     const savedRole = sessionStorage.getItem('auction_role') as AuctionRole | null
+
     if (savedRole === 'admin' || savedRole === 'participant') {
       setRole(savedRole)
     }
 
-    const savedSettings = localStorage.getItem('auction_settings')
-    if (savedSettings) {
-      try {
-        const settings = JSON.parse(savedSettings)
-        if (settings?.name) setTitle(settings.name)
-      } catch {
-        setTitle('경매 시스템')
-      }
-    }
+    loadSettings()
   }, [])
+
+  const loadSettings = async () => {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('tournament_name')
+      .single()
+
+    if (error) {
+      console.error('대회명 불러오기 실패:', error)
+      return
+    }
+
+    if (data?.tournament_name) {
+      setTitle(data.tournament_name)
+    }
+  }
 
   const handleLogin = () => {
     const trimmedCode = code.trim()
@@ -77,6 +87,7 @@ export default function HomePage() {
 
             <div>
               <h1 className="text-5xl font-black text-primary">{title}</h1>
+
               <p className="mt-3 text-lg text-muted-foreground">
                 관리자 코드 또는 경매 참가자 코드를 입력하세요
               </p>
@@ -148,7 +159,11 @@ export default function HomePage() {
           </p>
         </div>
 
-        <div className={`grid grid-cols-1 gap-10 mt-16 ${role === 'admin' ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+        <div
+          className={`grid grid-cols-1 gap-10 mt-16 ${
+            role === 'admin' ? 'md:grid-cols-3' : 'md:grid-cols-2'
+          }`}
+        >
           {role === 'admin' ? (
             <Link href="/admin" className="group">
               <div className="h-full min-h-[220px] rounded-2xl border border-border bg-card p-10 transition-all duration-200 hover:border-primary hover:shadow-xl hover:shadow-primary/20">
@@ -156,8 +171,10 @@ export default function HomePage() {
                   <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
                     <Settings className="h-9 w-9 text-primary" />
                   </div>
+
                   <h2 className="text-2xl font-black">관리자</h2>
                 </div>
+
                 <p className="text-lg text-muted-foreground">
                   플레이어 등록, 팀 설정, 대회 설정을 관리하세요
                 </p>
@@ -170,8 +187,10 @@ export default function HomePage() {
                   <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
                     <Gavel className="h-9 w-9 text-primary" />
                   </div>
+
                   <h2 className="text-2xl font-black">경매 입찰</h2>
                 </div>
+
                 <p className="text-lg text-muted-foreground">
                   참가자는 입찰 금액 입력만 사용할 수 있습니다
                 </p>
@@ -185,8 +204,10 @@ export default function HomePage() {
                 <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
                   <Users className="h-9 w-9 text-primary" />
                 </div>
+
                 <h2 className="text-2xl font-black">플레이어 목록</h2>
               </div>
+
               <p className="text-lg text-muted-foreground">
                 등록된 플레이어 목록과 티어를 확인하세요
               </p>
@@ -194,24 +215,26 @@ export default function HomePage() {
           </Link>
 
           {role === 'admin' && (
-          <Link
-            href="/overlay"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group"
-          >
-            <div className="h-full min-h-[220px] rounded-2xl border border-border bg-card p-10 transition-all duration-200 hover:border-primary hover:shadow-xl hover:shadow-primary/20">
-              <div className="mb-6 flex items-center gap-5">
-                <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
-                  <Monitor className="h-9 w-9 text-primary" />
+            <Link
+              href="/overlay"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group"
+            >
+              <div className="h-full min-h-[220px] rounded-2xl border border-border bg-card p-10 transition-all duration-200 hover:border-primary hover:shadow-xl hover:shadow-primary/20">
+                <div className="mb-6 flex items-center gap-5">
+                  <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
+                    <Monitor className="h-9 w-9 text-primary" />
+                  </div>
+
+                  <h2 className="text-2xl font-black">OBS 오버레이</h2>
                 </div>
-                <h2 className="text-2xl font-black">OBS 오버레이</h2>
+
+                <p className="text-lg text-muted-foreground">
+                  방송용 실시간 경매 화면을 새 창으로 확인하세요
+                </p>
               </div>
-              <p className="text-lg text-muted-foreground">
-                방송용 실시간 경매 화면을 새 창으로 확인하세요
-              </p>
-            </div>
-          </Link>
+            </Link>
           )}
         </div>
 

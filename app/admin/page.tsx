@@ -24,6 +24,7 @@ export default function AdminPage() {
   const [teamCount, setTeamCount] = useState(0)
   const [landmarkCount, setLandmarkCount] = useState(0)
   const [teams, setTeams] = useState<LocalTeam[]>([])
+  const [tournamentName, setTournamentName] = useState('경매 시스템')
 
   const refreshCounts = useCallback(async () => {
     const [playersResult, teamsResult, landmarksResult, teamsDataResult] = await Promise.all([
@@ -51,7 +52,7 @@ export default function AdminPage() {
     if (landmarksResult.error) {
       console.error('랜드마크 수 불러오기 실패:', landmarksResult.error)
     } else {
-      setLandmarkCount(landmarkCount || 0)
+      setLandmarkCount(landmarksResult.count || 0)
     }
 
     if (teamsDataResult.error) {
@@ -65,7 +66,7 @@ export default function AdminPage() {
   })
 )
     }
-  }, [landmarkCount])
+  }, [])
 
   useEffect(() => {
     const storedAuth = sessionStorage.getItem('admin_authenticated')
@@ -76,6 +77,7 @@ export default function AdminPage() {
     }
 
     refreshCounts()
+    loadSettings()
 
     const channel = supabase
       .channel('admin-dashboard-counts')
@@ -109,6 +111,22 @@ export default function AdminPage() {
     sessionStorage.removeItem('auction_role')
     setAdminCode('')
   }
+
+  const loadSettings = async () => {
+  const { data, error } = await supabase
+    .from('settings')
+    .select('tournament_name')
+    .single()
+
+  if (error) {
+    console.error('대회명 불러오기 실패:', error)
+    return
+  }
+
+  if (data?.tournament_name) {
+    setTournamentName(data.tournament_name)
+  }
+}
 
   if (!isAuthenticated) {
     return (
@@ -175,7 +193,7 @@ export default function AdminPage() {
             </Link>
 
             <div>
-              <h1 className="text-4xl font-black text-white">경매 시스템</h1>
+              <h1 className="text-4xl font-black text-white">{tournamentName}</h1>
               <p className="text-muted-foreground text-base mt-1">
                 관리자 대시보드
               </p>

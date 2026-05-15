@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ArrowLeft, Save, Plus, Trash2, RefreshCw, Gavel } from 'lucide-react'
+import { supabase } from '@/lib/supabase/client'
 
 type LocalSettings = {
   name: string
@@ -48,21 +49,13 @@ export default function SettingsPage() {
   const [adminCode, setAdminCode] = useState(DEFAULT_SETTINGS.admin_code)
 
   useEffect(() => {
-    const savedSettings = localStorage.getItem('auction_settings')
-    const settings: LocalSettings = savedSettings
-      ? JSON.parse(savedSettings)
-      : DEFAULT_SETTINGS
-
-    setName(settings.name)
-    setTeamCount(settings.team_count)
-    setDefaultPoints(settings.default_points ?? null)
-    setTimerSeconds(settings.timer_seconds)
-    setAdminCode(settings.admin_code)
+    loadSettings()
 
     const savedTeams = localStorage.getItem('auction_teams')
     const loadedTeams: LocalTeam[] = savedTeams ? JSON.parse(savedTeams) : []
 
     setTeams(loadedTeams)
+
     setTeamDrafts(
       loadedTeams.map((team) => ({
         id: team.id,
@@ -71,6 +64,21 @@ export default function SettingsPage() {
       }))
     )
   }, [])
+
+  const loadSettings = async () => {
+  const { data, error } = await supabase
+    .from('settings')
+    .select('*')
+
+  if (error) {
+    console.error('대회명 불러오기 실패:', error)
+    return
+  }
+
+  if (data && data.length > 0) {
+    setName(data[0].tournament_name || '경매 시스템')
+  }
+}
 
   const syncTeamDrafts = (nextTeams: LocalTeam[]) => {
     setTeamDrafts(
@@ -87,37 +95,66 @@ export default function SettingsPage() {
     localStorage.setItem('auction_teams', JSON.stringify(nextTeams))
   }
 
-  const handleSave = () => {
-    setLoading(true)
+  const handleSave = async () => {
+  setLoading(true)
 
-    const settings: LocalSettings = {
-      name,
-      team_count: teamCount,
-      default_points: defaultPoints,
-      timer_seconds: timerSeconds,
-      admin_code: adminCode,
-    }
+  const { data: existing } = await supabase
+    .from('settings')
+    .select('id')
+    .limit(1)
+    .maybeSingle()
 
-    localStorage.setItem('auction_settings', JSON.stringify(settings))
+  let error = null
 
-    setSaved(true)
-    setLoading(false)
+  if (existing?.id) {
+    const result = await supabase
+      .from('settings')
+      .update({
+        tournament_name: name,
+      })
+      .eq('id', existing.id)
 
-    setTimeout(() => setSaved(false), 2000)
+    error = result.error
+  } else {
+    const result = await supabase
+      .from('settings')
+      .insert({
+        tournament_name: name,
+      })
+
+    error = result.error
   }
 
+  if (error) {
+    console.error('설정 저장 실패:', error)
+    setLoading(false)
+    return
+  }
+
+  setSaved(true)
+  setLoading(false)
+
+  setTimeout(() => setSaved(false), 2000)
+}
+
   const handleGenerateTeams = () => {
-    if (teams.length > 0 && !confirm('기존 팀을 모두 삭제하고 새로 생성하시겠습니까?')) {
+    if (
+      teams.length > 0 &&
+      !confirm('기존 팀을 모두 삭제하고 새로 생성하시겠습니까?')
+    ) {
       return
     }
 
     setLoading(true)
 
-    const newTeams: LocalTeam[] = Array.from({ length: teamCount }, (_, i) => ({
-      id: `team-${crypto.randomUUID()}`,
-      name: `TEAM ${i + 1}`,
-      points: defaultPoints ?? 0,
-    }))
+    const newTeams: LocalTeam[] = Array.from(
+      { length: teamCount },
+      (_, i) => ({
+        id: `team-${i + 1}`,
+        name: `TEAM ${i + 1}`,
+        points: defaultPoints ?? 0,
+      })
+    )
 
     saveTeams(newTeams)
     syncTeamDrafts(newTeams)
@@ -128,25 +165,41 @@ export default function SettingsPage() {
   const handleDraftTeamName = (teamId: string, newName: string) => {
     setTeamDrafts((prev) =>
       prev.map((draft) =>
-        draft.id === teamId ? { ...draft, name: newName } : draft
+        draft.id === teamId
+          ? { ...draft, name: newName }
+          : draft
       )
     )
   }
 
-  const handleDraftTeamPoints = (teamId: string, newPoints: string) => {
+  const handleDraftTeamPoints = (
+    teamId: string,
+    newPoints: string
+  ) => {
     setTeamDrafts((prev) =>
       prev.map((draft) =>
-        draft.id === teamId ? { ...draft, points: newPoints } : draft
+        draft.id === teamId
+          ? { ...draft, points: newPoints }
+          : draft
       )
     )
   }
 
   const handleApplyTeam = (team: LocalTeam) => {
-    const draft = teamDrafts.find((item) => item.id === team.id)
+    const draft = teamDrafts.find(
+      (item) => item.id === team.id
+    )
+
     if (!draft) return
 
-    const nextPoints = draft.points.trim() === '' ? 0 : parseInt(draft.points)
-    const safePoints = Number.isNaN(nextPoints) ? 0 : Math.max(0, nextPoints)
+    const nextPoints =
+      draft.points.trim() === ''
+        ? 0
+        : parseInt(draft.points)
+
+    const safePoints = Number.isNaN(nextPoints)
+      ? 0
+      : Math.max(0, nextPoints)
 
     const nextTeams = teams.map((t) =>
       t.id === team.id
@@ -162,19 +215,29 @@ export default function SettingsPage() {
     syncTeamDrafts(nextTeams)
 
     setPointSavedTeamId(team.id)
+
     setTimeout(() => setPointSavedTeamId(null), 1200)
   }
 
   const handleDeleteTeam = (team: LocalTeam) => {
-    if (!confirm(`${team.name}을(를) 삭제하시겠습니까?`)) return
+    if (!confirm(`${team.name}을(를) 삭제하시겠습니까?`))
+      return
 
-    const nextTeams = teams.filter((t) => t.id !== team.id)
+    const nextTeams = teams.filter(
+      (t) => t.id !== team.id
+    )
+
     saveTeams(nextTeams)
     syncTeamDrafts(nextTeams)
   }
 
   const handleResetTeamPoints = () => {
-    if (!confirm('모든 팀의 포인트를 기본값으로 초기화하시겠습니까?')) return
+    if (
+      !confirm(
+        '모든 팀의 포인트를 기본값으로 초기화하시겠습니까?'
+      )
+    )
+      return
 
     const nextTeams = teams.map((team) => ({
       ...team,
@@ -197,7 +260,10 @@ export default function SettingsPage() {
             </Link>
 
             <div>
-              <h1 className="text-2xl font-bold">대회 설정</h1>
+              <h1 className="text-2xl font-bold">
+                대회 설정
+              </h1>
+
               <p className="text-muted-foreground text-sm">
                 대회 정보 및 팀 관리
               </p>
@@ -212,8 +278,12 @@ export default function SettingsPage() {
               </Button>
             </Link>
 
-            <Button onClick={handleSave} disabled={loading}>
+            <Button
+              onClick={handleSave}
+              disabled={loading}
+            >
               <Save className="w-4 h-4 mr-2" />
+
               {saved ? '저장됨!' : '저장'}
             </Button>
           </div>
@@ -226,58 +296,92 @@ export default function SettingsPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium">대회명</label>
+              <label className="text-sm font-medium">
+                대회명
+              </label>
+
               <Input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) =>
+                  setName(e.target.value)
+                }
                 placeholder="대회 이름을 입력하세요"
               />
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">관리자 코드</label>
+              <label className="text-sm font-medium">
+                관리자 코드
+              </label>
+
               <Input
                 type="password"
                 value={adminCode}
-                onChange={(e) => setAdminCode(e.target.value)}
+                onChange={(e) =>
+                  setAdminCode(e.target.value)
+                }
                 placeholder="관리자 인증 코드"
               />
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">팀 수</label>
+              <label className="text-sm font-medium">
+                팀 수
+              </label>
+
               <Input
                 type="number"
                 value={teamCount}
-                onChange={(e) => setTeamCount(parseInt(e.target.value) || 16)}
+                onChange={(e) =>
+                  setTeamCount(
+                    parseInt(e.target.value) || 16
+                  )
+                }
                 min={2}
                 max={32}
               />
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">기본 포인트</label>
+              <label className="text-sm font-medium">
+                기본 포인트
+              </label>
+
               <Input
                 type="number"
                 value={defaultPoints ?? ''}
                 placeholder="기본 포인트 없음"
                 onChange={(e) => {
                   const value = e.target.value
-                  setDefaultPoints(value === '' ? null : parseInt(value))
+
+                  setDefaultPoints(
+                    value === ''
+                      ? null
+                      : parseInt(value)
+                  )
                 }}
                 min={0}
               />
+
               <p className="text-xs text-muted-foreground">
-                비워두면 팀 생성/초기화 시 0포인트로 설정됩니다.
+                비워두면 팀 생성/초기화 시
+                0포인트로 설정됩니다.
               </p>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">경매 타이머 (초)</label>
+              <label className="text-sm font-medium">
+                경매 타이머 (초)
+              </label>
+
               <Input
                 type="number"
                 value={timerSeconds}
-                onChange={(e) => setTimerSeconds(parseInt(e.target.value) || 15)}
+                onChange={(e) =>
+                  setTimerSeconds(
+                    parseInt(e.target.value) || 15
+                  )
+                }
                 min={5}
                 max={60}
               />
@@ -288,19 +392,30 @@ export default function SettingsPage() {
         <div className="bg-card border border-border rounded-lg p-6 space-y-6">
           <div className="flex items-center justify-between border-b border-border pb-4">
             <div>
-              <h2 className="text-lg font-semibold">팀 포인트 관리</h2>
+              <h2 className="text-lg font-semibold">
+                팀 포인트 관리
+              </h2>
+
               <p className="text-xs text-muted-foreground mt-1">
-                팀 이름/포인트는 입력 후 개별 지급 버튼을 눌러야 저장됩니다.
+                팀 이름/포인트는 입력 후
+                개별 지급 버튼을 눌러야 저장됩니다.
               </p>
             </div>
 
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={handleResetTeamPoints}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetTeamPoints}
+              >
                 <RefreshCw className="w-4 h-4 mr-1" />
                 포인트 초기화
               </Button>
 
-              <Button size="sm" onClick={handleGenerateTeams}>
+              <Button
+                size="sm"
+                onClick={handleGenerateTeams}
+              >
                 <Plus className="w-4 h-4 mr-1" />
                 팀 자동 생성
               </Button>
@@ -310,14 +425,27 @@ export default function SettingsPage() {
           {teams.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {teams.map((team, index) => {
-                const draft = teamDrafts.find((item) => item.id === team.id)
-                const draftName = draft?.name ?? team.name
-                const draftPoints = draft?.points ?? String(team.points ?? 0)
+                const draft = teamDrafts.find(
+                  (item) => item.id === team.id
+                )
+
+                const draftName =
+                  draft?.name ?? team.name
+
+                const draftPoints =
+                  draft?.points ??
+                  String(team.points ?? 0)
+
                 const isChanged =
-                  draftName !== team.name || Number(draftPoints || 0) !== team.points
+                  draftName !== team.name ||
+                  Number(draftPoints || 0) !==
+                    team.points
 
                 return (
-                  <div key={team.id} className="bg-secondary rounded-lg p-3 space-y-3">
+                  <div
+                    key={team.id}
+                    className="bg-secondary rounded-lg p-3 space-y-3"
+                  >
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">
                         #{index + 1}
@@ -327,28 +455,46 @@ export default function SettingsPage() {
                         variant="ghost"
                         size="icon"
                         className="w-6 h-6"
-                        onClick={() => handleDeleteTeam(team)}
+                        onClick={() =>
+                          handleDeleteTeam(team)
+                        }
                       >
                         <Trash2 className="w-3 h-3 text-destructive" />
                       </Button>
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">팀 이름</label>
+                      <label className="text-xs text-muted-foreground">
+                        팀 이름
+                      </label>
+
                       <input
                         type="text"
                         value={draftName}
-                        onChange={(e) => handleDraftTeamName(team.id, e.target.value)}
+                        onChange={(e) =>
+                          handleDraftTeamName(
+                            team.id,
+                            e.target.value
+                          )
+                        }
                         className="w-full bg-input border border-border rounded px-2 py-1 text-sm font-medium"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">개별 포인트</label>
+                      <label className="text-xs text-muted-foreground">
+                        개별 포인트
+                      </label>
+
                       <input
                         type="number"
                         value={draftPoints}
-                        onChange={(e) => handleDraftTeamPoints(team.id, e.target.value)}
+                        onChange={(e) =>
+                          handleDraftTeamPoints(
+                            team.id,
+                            e.target.value
+                          )
+                        }
                         className="w-full bg-input border border-border rounded px-2 py-1 text-sm"
                         min={0}
                       />
@@ -357,10 +503,18 @@ export default function SettingsPage() {
                     <Button
                       size="sm"
                       className="w-full"
-                      variant={isChanged ? 'default' : 'outline'}
-                      onClick={() => handleApplyTeam(team)}
+                      variant={
+                        isChanged
+                          ? 'default'
+                          : 'outline'
+                      }
+                      onClick={() =>
+                        handleApplyTeam(team)
+                      }
                     >
-                      {pointSavedTeamId === team.id ? '적용됨!' : '지급'}
+                      {pointSavedTeamId === team.id
+                        ? '적용됨!'
+                        : '지급'}
                     </Button>
                   </div>
                 )
@@ -368,7 +522,9 @@ export default function SettingsPage() {
             </div>
           ) : (
             <div className="text-center py-8">
-              <p className="text-muted-foreground mb-4">등록된 팀이 없습니다</p>
+              <p className="text-muted-foreground mb-4">
+                등록된 팀이 없습니다
+              </p>
 
               <Button onClick={handleGenerateTeams}>
                 <Plus className="w-4 h-4 mr-2" />

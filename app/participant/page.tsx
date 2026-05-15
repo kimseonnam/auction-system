@@ -651,7 +651,7 @@ export default function ParticipantPage() {
                 <h2 className="text-3xl font-black text-primary">{joinedTeam.name}</h2>
                 <p className="text-lg font-bold">보유 포인트: {joinedTeam.points}P / {limitText}</p>
               </div>
-              <Button variant="outline" onClick={handleLogout}>팀 코드 다시 입력</Button>
+              <Button variant="outline" onClick={handleLogout}>로그아웃</Button>
             </div>
           </section>
         )}
