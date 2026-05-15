@@ -9,6 +9,13 @@ import { supabase } from '@/lib/supabase/client'
 
 const ADMIN_CODE = '1234'
 
+type LocalTeam = {
+  id: string
+  name: string
+  is_connected?: boolean | null
+  connected_at?: string | null
+}
+
 export default function AdminPage() {
   const [adminCode, setAdminCode] = useState('')
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -16,12 +23,17 @@ export default function AdminPage() {
   const [playerCount, setPlayerCount] = useState(0)
   const [teamCount, setTeamCount] = useState(0)
   const [landmarkCount, setLandmarkCount] = useState(0)
+  const [teams, setTeams] = useState<LocalTeam[]>([])
 
   const refreshCounts = useCallback(async () => {
-    const [playersResult, teamsResult, landmarksResult] = await Promise.all([
+    const [playersResult, teamsResult, landmarksResult, teamsDataResult] = await Promise.all([
       supabase.from('players').select('id', { count: 'exact', head: true }),
       supabase.from('teams').select('id', { count: 'exact', head: true }),
       supabase.from('landmarks').select('id', { count: 'exact', head: true }),
+      supabase
+        .from('teams')
+        .select('id, name, is_connected, connected_at')
+        .order('id', { ascending: true }),
     ])
 
     if (playersResult.error) {
@@ -39,9 +51,21 @@ export default function AdminPage() {
     if (landmarksResult.error) {
       console.error('랜드마크 수 불러오기 실패:', landmarksResult.error)
     } else {
-      setLandmarkCount(landmarksResult.count || 0)
+      setLandmarkCount(landmarkCount || 0)
     }
-  }, [])
+
+    if (teamsDataResult.error) {
+      console.error('팀 연결 상태 불러오기 실패:', teamsDataResult.error)
+    } else {
+      setTeams(
+  ((teamsDataResult.data || []) as LocalTeam[]).sort((a, b) => {
+    const aNum = Number(a.id.replace('team-', ''))
+    const bNum = Number(b.id.replace('team-', ''))
+    return aNum - bNum
+  })
+)
+    }
+  }, [landmarkCount])
 
   useEffect(() => {
     const storedAuth = sessionStorage.getItem('admin_authenticated')
@@ -209,6 +233,41 @@ export default function AdminPage() {
           <QuickStat label="등록 팀" count={teamCount} />
           <QuickStat label="랜드마크" count={landmarkCount} />
           <QuickStat label="기본 포인트" count={0} />
+        </div>
+
+        <div className="bg-card border border-border rounded-2xl p-6">
+          <h2 className="text-2xl font-black text-white mb-5">
+            참가자 연결 상태
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {teams.map((team) => (
+              <div
+                key={team.id}
+                className="border border-border rounded-xl p-4 bg-background/50"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="font-black text-white">{team.name}</p>
+
+                  {team.is_connected ? (
+                    <span className="text-green-400 text-sm font-black">
+                      ● 접속 중
+                    </span>
+                  ) : (
+                    <span className="text-red-400 text-sm font-black">
+                      ● 연결 끊김
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs text-muted-foreground mt-2">
+                  {team.connected_at
+                    ? new Date(team.connected_at).toLocaleTimeString()
+                    : '기록 없음'}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </main>

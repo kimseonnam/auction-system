@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link
+    rel="stylesheet"
+    crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css"
+  />
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background:
+        radial-gradient(circle at center, rgba(120, 0, 40, 0.25), transparent 35%),
+        linear-gradient(135deg, #020617 0%, #09090b 50%, #000000 100%);
+      font-family: "Pretendard", sans-serif;
+      animation: screenFadeOut 1s ease forwards;
+      animation-delay: 3s;
+    }
+
+    .background-glow {
+      position: absolute;
+      width: 500px;
+      height: 500px;
+      border-radius: 999px;
+      background: rgba(255, 0, 70, 0.18);
+      filter: blur(80px);
+      animation: glowPulse 3s ease-in-out infinite;
+    }
+
+    .container {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      opacity: 0;
+      animation: logoIntro 1.2s ease forwards;
+    }
+
+    .logo {
+      width: 340px;
+      object-fit: contain;
+      filter:
+        drop-shadow(0 0 25px rgba(255, 0, 80, 0.45))
+        drop-shadow(0 0 60px rgba(255, 180, 80, 0.18));
+      animation: logoFloat 3s ease-in-out infinite;
+    }
+
+    .title {
+      margin-top: 20px;
+      color: white;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: 6px;
+      opacity: 0.94;
+    }
+
+    .loading {
+      margin-top: 16px;
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 12px;
+      opacity: 0.7;
+      font-weight: 700;
+      letter-spacing: 3px;
+    }
+
+    .bar {
+      margin-top: 14px;
+      width: 260px;
+      height: 4px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .bar::after {
+      content: "";
+      display: block;
+      width: 40%;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, transparent, #ff315f, #ffd166, transparent);
+      animation: loadingMove 1.4s linear infinite;
+    }
+
+    .powered {
+      position: absolute;
+      bottom: 24px;
+      color: rgba(255, 255, 255, 0.34);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 2px;
+    }
+
+    @keyframes logoIntro {
+      0% {
+        opacity: 0;
+        transform: scale(0.88) translateY(12px);
+      }
+
+      70% {
+        opacity: 1;
+        transform: scale(1.04) translateY(0);
+      }
+
+      100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    @keyframes logoFloat {
+      0%, 100% {
+        transform: translateY(0);
+      }
+
+      50% {
+        transform: translateY(-6px);
+      }
+    }
+
+    @keyframes glowPulse {
+      0%, 100% {
+        transform: scale(1);
+        opacity: 0.7;
+      }
+
+      50% {
+        transform: scale(1.12);
+        opacity: 1;
+      }
+    }
+
+    @keyframes loadingMove {
+      0% {
+        transform: translateX(-120%);
+      }
+
+      100% {
+        transform: translateX(260%);
+      }
+    }
+
+    @keyframes screenFadeOut {
+      to {
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="background-glow"></div>
+
+  <div class="container">
+
+    <div class="title">MIR CUP</div>
+
+    <div class="loading">CONNECTING TO LIVE SERVER...</div>
+
+    <div class="bar"></div>
+  </div>
+
+  <div class="powered">POWERED BY KIMSEONNAM</div>
+</body>
+</html>

@@ -99,7 +99,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   name: '경매 시스템',
   team_count: 16,
   default_points: 100,
-  timer_seconds: 15,
+  timer_seconds: 20,
   admin_code: '1234',
 }
 
@@ -107,7 +107,7 @@ const DEFAULT_AUCTION_STATE: LocalAuctionState = {
   current_player_id: null,
   current_bid: 0,
   current_bidder_team_id: null,
-  timer_remaining: 15,
+  timer_remaining: 20,
   status: 'ready',
 }
 
@@ -115,7 +115,7 @@ const DEFAULT_LANDMARK_AUCTION_STATE: LandmarkAuctionState = {
   current_landmark_id: null,
   current_bid: 0,
   current_bidder_team_id: null,
-  timer_remaining: 15,
+  timer_remaining: 20,
   status: 'ready',
 }
 
@@ -619,7 +619,7 @@ export default function OverlayPage() {
           current_player_id: auctionStateResult.data.current_player_id ?? null,
           current_bid: Number(auctionStateResult.data.current_bid ?? 0),
           current_bidder_team_id: auctionStateResult.data.current_bidder_team_id ?? null,
-          timer_remaining: Number(auctionStateResult.data.timer_remaining ?? 15),
+          timer_remaining: Number(auctionStateResult.data.timer_remaining ?? 20),
           status:
             auctionStateResult.data.status === 'running' ||
             auctionStateResult.data.status === 'paused' ||
@@ -635,7 +635,7 @@ export default function OverlayPage() {
           current_landmark_id: landmarkStateResult.data.current_landmark_id ?? null,
           current_bid: Number(landmarkStateResult.data.current_bid ?? 0),
           current_bidder_team_id: landmarkStateResult.data.current_bidder_team_id ?? null,
-          timer_remaining: Number(landmarkStateResult.data.timer_remaining ?? 15),
+          timer_remaining: Number(landmarkStateResult.data.timer_remaining ?? 20),
           status:
             landmarkStateResult.data.status === 'running' ||
             landmarkStateResult.data.status === 'paused' ||
