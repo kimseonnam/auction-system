@@ -290,7 +290,7 @@ export default function PlayersManagePage() {
           current_player_id: null,
           current_bid: 0,
           current_bidder_team_id: null,
-          timer_remaining: 15,
+          timer_remaining: 20,
           status: 'ready',
         })
         .eq('id', 'main'),
