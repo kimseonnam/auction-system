@@ -86,6 +86,10 @@ export default function AdminPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, refreshCounts)
       .subscribe()
 
+      const interval = setInterval(() => {
+        refreshCounts()
+      }, 3000)
+
     return () => {
       supabase.removeChannel(channel)
     }

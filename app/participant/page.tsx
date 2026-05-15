@@ -268,7 +268,7 @@ export default function ParticipantPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadData)
       .subscribe()
 
-    const interval = setInterval(loadData, 1000)
+    const interval = setInterval(() => {loadData()}, 3000)
 
     return () => {
       supabase.removeChannel(channel)
@@ -375,7 +375,9 @@ export default function ParticipantPage() {
     }
 
     touchConnection()
-    const interval = setInterval(touchConnection, 30000)
+    const interval = setInterval(() => {touchConnection()
+      loadData()
+      }, 3000)
 
     const handlePageHide = () => {
       releaseTeamConnection(teamId)
