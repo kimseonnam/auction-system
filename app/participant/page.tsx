@@ -6,14 +6,13 @@ import { Button } from '@/components/ui/button'
 import { supabase } from '@/lib/supabase/client'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 
-type AuctionMode = 'player' | 'landmark' | 'results'
+type AuctionMode = 'player' | 'results'
 
 type LocalTeam = {
   id: string
   name: string
   points: number
   join_code?: string | null
-  landmarks?: string[]
   is_connected?: boolean | null
   connected_at?: string | null
   connected_session_id?: string | null
@@ -34,34 +33,14 @@ type LocalPlayer = {
   auction_order?: number | null
 }
 
-type LocalLandmark = {
-  id: string
-  name: string
-  image_url?: string | null
-  image?: string | null
-  team_id?: string | null
-  bid_amount?: number | null
-  is_passed?: boolean | null
-  category?: string | null
-  map?: string | null
-  auction_order?: number | null
-}
-
 type PlayerAuctionState = {
   current_player_id: string | null
   current_bid: number
   current_bidder_team_id: string | null
+  auction_end_time?: string | null
   timer_remaining: number
   status: 'ready' | 'running' | 'paused'
   overlay_mode?: AuctionMode | null
-}
-
-type LandmarkAuctionState = {
-  current_landmark_id: string | null
-  current_bid: number
-  current_bidder_team_id: string | null
-  timer_remaining: number
-  status: 'ready' | 'running' | 'paused'
 }
 
 type AuctionLog = {
@@ -80,16 +59,27 @@ const DEFAULT_PLAYER_STATE: PlayerAuctionState = {
   overlay_mode: 'player',
 }
 
-const DEFAULT_LANDMARK_STATE: LandmarkAuctionState = {
-  current_landmark_id: null,
-  current_bid: 0,
-  current_bidder_team_id: null,
-  timer_remaining: 20,
-  status: 'ready',
+const CONNECTION_TIMEOUT_MS = 5 * 1000
+const PARTICIPANT_SESSION_ID_KEY = 'auction_participant_session_id'
+
+const getRemainSeconds = (endTime?: string | null, status?: string, fallback = 20) => {
+  if (status !== 'running' || !endTime) return fallback
+
+  const end = new Date(endTime).getTime()
+  if (Number.isNaN(end)) return fallback
+
+  return Math.max(0, Math.ceil((end - Date.now()) / 1000))
 }
 
-const CONNECTION_TIMEOUT_MS = 5 * 60 * 1000
-const PARTICIPANT_SESSION_ID_KEY = 'auction_participant_session_id'
+const bidSound =
+  typeof window !== 'undefined'
+    ? new Audio('/sounds/bid.mp3')
+    : null
+
+const countdownSound =
+  typeof window !== 'undefined'
+    ? new Audio('/sounds/countdown-tick.mp3')
+    : null
 
 const getParticipantSessionId = () => {
   if (typeof window === 'undefined') return ''
@@ -112,7 +102,7 @@ const isConnectionExpired = (connectedAt?: string | null) => {
 }
 
 const normalizeMode = (value: unknown): AuctionMode => {
-  if (value === 'landmark' || value === 'results' || value === 'player') return value
+  if (value === 'results' || value === 'player') return value
   return 'player'
 }
 
@@ -121,12 +111,6 @@ const getTeamNumber = (teamId?: string | null) => {
   const match = teamId.match(/team-(\d+)/)
   return match ? Number(match[1]) : 9999
 }
-
-const getLandmarkImage = (landmark?: LocalLandmark | null) =>
-  landmark?.image_url || landmark?.image || null
-
-const getLandmarkMapName = (landmark?: LocalLandmark | null) =>
-  landmark?.category || landmark?.map || '랜드마크'
 
 const getTierColorClass = (tier?: string) => {
   switch (tier) {
@@ -143,24 +127,28 @@ const getTierColorClass = (tier?: string) => {
   }
 }
 
+const getTierBorderClass = (tier?: string) => {
+  switch (tier) {
+    case 'B':
+      return 'border-blue-400 shadow-[0_0_24px_rgba(96,165,250,0.65)]'
+    case 'C':
+      return 'border-yellow-400 shadow-[0_0_24px_rgba(250,204,21,0.65)]'
+    case 'D':
+      return 'border-zinc-400 shadow-[0_0_24px_rgba(161,161,170,0.5)]'
+    default:
+      return 'border-red-500'
+  }
+}
+
 const hasSameTierPlayer = (ownedPlayers: LocalPlayer[], targetPlayer?: LocalPlayer | null) => {
   if (!targetPlayer?.tier) return false
   return ownedPlayers.some((player) => player.tier === targetPlayer.tier)
 }
 
-const hasSameMapLandmark = (ownedLandmarks: LocalLandmark[], targetLandmark?: LocalLandmark | null) => {
-  const targetMap = getLandmarkMapName(targetLandmark).trim()
-  if (!targetMap) return false
-
-  return ownedLandmarks.some((landmark) => getLandmarkMapName(landmark).trim() === targetMap)
-}
-
 export default function ParticipantPage() {
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [players, setPlayers] = useState<LocalPlayer[]>([])
-  const [landmarks, setLandmarks] = useState<LocalLandmark[]>([])
   const [playerState, setPlayerState] = useState<PlayerAuctionState>(DEFAULT_PLAYER_STATE)
-  const [landmarkState, setLandmarkState] = useState<LandmarkAuctionState>(DEFAULT_LANDMARK_STATE)
   const [logs, setLogs] = useState<AuctionLog[]>([])
   const [mode, setMode] = useState<AuctionMode>('player')
   const [teamId, setTeamId] = useState<string | null>(null)
@@ -174,7 +162,7 @@ export default function ParticipantPage() {
   const loadData = useCallback(async () => {
     setIsLoading(true)
 
-    const [teamsResult, playersResult, landmarksResult, playerStateResult, landmarkStateResult, logsResult] =
+    const [teamsResult, playersResult, playerStateResult, logsResult] =
       await Promise.all([
         supabase.from('teams').select('*').order('id', { ascending: true }),
         supabase
@@ -182,13 +170,7 @@ export default function ParticipantPage() {
           .select('*')
           .order('auction_order', { ascending: true, nullsFirst: false })
           .order('id', { ascending: true }),
-        supabase
-          .from('landmarks')
-          .select('*')
-          .order('auction_order', { ascending: true, nullsFirst: false })
-          .order('id', { ascending: true }),
         supabase.from('auction_state').select('*').eq('id', 'main').maybeSingle(),
-        supabase.from('landmark_auction_state').select('*').eq('id', 'main').maybeSingle(),
         supabase
           .from('auction_logs')
           .select('*')
@@ -199,20 +181,24 @@ export default function ParticipantPage() {
 
     if (teamsResult.error) console.error('participant teams load error:', teamsResult.error)
     if (playersResult.error) console.error('participant players load error:', playersResult.error)
-    if (landmarksResult.error) console.error('participant landmarks load error:', landmarksResult.error)
     if (playerStateResult.error) console.error('participant auction_state load error:', playerStateResult.error)
-    if (landmarkStateResult.error) console.error('participant landmark_state load error:', landmarkStateResult.error)
     if (logsResult.error) console.error('participant logs load error:', logsResult.error)
 
     const nextTeams = ((teamsResult.data || []) as LocalTeam[]).sort(
       (a, b) => getTeamNumber(a.id) - getTeamNumber(b.id)
     )
+
     const nextPlayerState = playerStateResult.data
       ? {
           current_player_id: playerStateResult.data.current_player_id ?? null,
           current_bid: Number(playerStateResult.data.current_bid ?? 0),
           current_bidder_team_id: playerStateResult.data.current_bidder_team_id ?? null,
-          timer_remaining: Number(playerStateResult.data.timer_remaining ?? 20),
+          auction_end_time: playerStateResult.data.auction_end_time ?? null,
+          timer_remaining: getRemainSeconds(
+            playerStateResult.data.auction_end_time ?? null,
+            playerStateResult.data.status,
+            DEFAULT_PLAYER_STATE.timer_remaining
+          ),
           status:
             playerStateResult.data.status === 'running' ||
             playerStateResult.data.status === 'paused' ||
@@ -223,26 +209,9 @@ export default function ParticipantPage() {
         }
       : DEFAULT_PLAYER_STATE
 
-    const nextLandmarkState = landmarkStateResult.data
-      ? {
-          current_landmark_id: landmarkStateResult.data.current_landmark_id ?? null,
-          current_bid: Number(landmarkStateResult.data.current_bid ?? 0),
-          current_bidder_team_id: landmarkStateResult.data.current_bidder_team_id ?? null,
-          timer_remaining: Number(landmarkStateResult.data.timer_remaining ?? 20),
-          status:
-            landmarkStateResult.data.status === 'running' ||
-            landmarkStateResult.data.status === 'paused' ||
-            landmarkStateResult.data.status === 'ready'
-              ? landmarkStateResult.data.status
-              : 'ready',
-        }
-      : DEFAULT_LANDMARK_STATE
-
     setTeams(nextTeams)
     setPlayers((playersResult.data || []) as LocalPlayer[])
-    setLandmarks((landmarksResult.data || []) as LocalLandmark[])
     setPlayerState(nextPlayerState)
-    setLandmarkState(nextLandmarkState)
     setLogs((logsResult.data || []) as AuctionLog[])
     setMode(normalizeMode(nextPlayerState.overlay_mode))
     setIsLoading(false)
@@ -253,7 +222,11 @@ export default function ParticipantPage() {
   }, [])
 
   useEffect(() => {
-    const savedTeamId = sessionStorage.getItem('auction_participant_team_id') || sessionStorage.getItem('auction_team_id') || sessionStorage.getItem('team_id')
+    const savedTeamId =
+      sessionStorage.getItem('auction_participant_team_id') ||
+      sessionStorage.getItem('auction_team_id') ||
+      sessionStorage.getItem('team_id')
+
     if (savedTeamId) setTeamId(savedTeamId)
 
     loadData()
@@ -262,17 +235,12 @@ export default function ParticipantPage() {
       .channel('participant-page-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmark_auction_state' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadData)
       .subscribe()
 
-    const interval = setInterval(() => {loadData()}, 3000)
-
     return () => {
       supabase.removeChannel(channel)
-      clearInterval(interval)
     }
   }, [loadData])
 
@@ -284,17 +252,13 @@ export default function ParticipantPage() {
   const auctionPlayers = players.filter((player) => !player.is_captain)
   const currentPlayer = auctionPlayers.find((player) => player.id === playerState.current_player_id) || null
   const currentPlayerBidder = teams.find((team) => team.id === playerState.current_bidder_team_id) || null
-  const currentLandmark = landmarks.find((landmark) => landmark.id === landmarkState.current_landmark_id) || null
-  const currentLandmarkBidder = teams.find((team) => team.id === landmarkState.current_bidder_team_id) || null
 
   const myPlayers = joinedTeam
     ? players.filter((player) => player.team_id === joinedTeam.id && !player.is_captain)
     : []
-  const myLandmarks = joinedTeam
-    ? landmarks.filter((landmark) => landmark.team_id === joinedTeam.id || joinedTeam.landmarks?.includes(landmark.id))
-    : []
 
   const canBidPlayer = Boolean(
+    mode === 'player' &&
     joinedTeam &&
     currentPlayer &&
     playerState.status === 'running' &&
@@ -302,19 +266,11 @@ export default function ParticipantPage() {
     myPlayers.length < 3 &&
     !hasSameTierPlayer(myPlayers, currentPlayer)
   )
-  const canBidLandmark = Boolean(
-    joinedTeam &&
-    currentLandmark &&
-    landmarkState.status === 'running' &&
-    landmarkState.timer_remaining > 0 &&
-    myLandmarks.length < 2 &&
-    !hasSameMapLandmark(myLandmarks, currentLandmark)
-  )
-
 
   const availablePlayers = auctionPlayers.filter(
     (player) => !player.team_id && !player.is_passed && !player.is_captain
   )
+
   const orderedQueuePlayers = currentPlayer
     ? [
         currentPlayer,
@@ -322,18 +278,7 @@ export default function ParticipantPage() {
       ]
     : availablePlayers
 
-  const availableLandmarks = landmarks.filter(
-    (landmark) => !landmark.team_id && !landmark.is_passed
-  )
-  const orderedQueueLandmarks = currentLandmark
-    ? [
-        currentLandmark,
-        ...availableLandmarks.filter((landmark) => landmark.id !== currentLandmark.id),
-      ]
-    : availableLandmarks
-
   const passedPlayers = auctionPlayers.filter((player) => player.is_passed)
-  const passedLandmarks = landmarks.filter((landmark) => landmark.is_passed)
 
   const releaseTeamConnection = useCallback(
     async (targetTeamId?: string | null) => {
@@ -374,20 +319,32 @@ export default function ParticipantPage() {
       if (error) console.error('team connection heartbeat error:', error)
     }
 
-    touchConnection()
-    const interval = setInterval(() => {touchConnection()
-      loadData()
-      }, 3000)
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'hidden') {
+        const navigationEntries = performance.getEntriesByType('navigation')
+        const navigation = navigationEntries[0] as PerformanceNavigationTiming | undefined
 
-    const handlePageHide = () => {
-      releaseTeamConnection(teamId)
+        // 새로고침(F5)은 연결 유지
+        if (navigation?.type === 'reload') {
+          return
+        }
+
+        // 탭 종료 / 브라우저 종료 시 연결 해제
+        await releaseTeamConnection(teamId)
+      }
     }
 
-    window.addEventListener('pagehide', handlePageHide)
+    touchConnection()
+
+    const interval = setInterval(() => {
+      touchConnection()
+    }, 3000)
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
       clearInterval(interval)
-      window.removeEventListener('pagehide', handlePageHide)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [teamId, sessionId, releaseTeamConnection])
 
@@ -462,9 +419,15 @@ export default function ParticipantPage() {
     sessionStorage.removeItem('auction_participant_team_id')
     sessionStorage.removeItem('auction_team_id')
     sessionStorage.removeItem('team_id')
+
     setTeamId(null)
     setCodeInput('')
     setError('')
+
+    const newSessionId = crypto.randomUUID()
+    sessionStorage.setItem(PARTICIPANT_SESSION_ID_KEY, newSessionId)
+    setSessionId(newSessionId)
+
     await loadData()
   }
 
@@ -492,48 +455,8 @@ export default function ParticipantPage() {
     setIsBidding(true)
 
     try {
-      if (mode === 'landmark') {
-        if (!currentLandmark) {
-          alert('현재 경매 중인 랜드마크가 없습니다.')
-          return
-        }
-        if (myLandmarks.length >= 2) {
-          alert('이미 랜드마크 2개를 가져간 팀은 더 이상 입찰할 수 없습니다.')
-          return
-        }
-        if (hasSameMapLandmark(myLandmarks, currentLandmark)) {
-          alert('이미 같은 맵의 랜드마크를 가져간 팀은 입찰할 수 없습니다.')
-          return
-        }
-        if (landmarkState.status !== 'running' || landmarkState.timer_remaining <= 0) {
-          alert('입찰 시간이 종료되었습니다.')
-          return
-        }
-        if (amount <= landmarkState.current_bid) return
-        if (joinedTeam.points < amount) {
-          alert('보유 포인트보다 많이 입찰할 수 없습니다.')
-          return
-        }
-
-        const { error } = await supabase
-          .from('landmark_auction_state')
-          .upsert({
-            id: 'main',
-            ...landmarkState,
-            current_bid: amount,
-            current_bidder_team_id: joinedTeam.id,
-            timer_remaining: 20,
-          })
-
-        if (error) {
-          console.error('landmark bid error:', error)
-          alert('입찰 저장에 실패했습니다.')
-          return
-        }
-
-        await addLog(`[${joinedTeam.name} - ${amount}포인트 입찰]`)
-        setBidInput('')
-        await loadData()
+      if (mode !== 'player') {
+        alert('현재 인원 경매 화면이 아닙니다.')
         return
       }
 
@@ -566,7 +489,7 @@ export default function ParticipantPage() {
           ...playerState,
           current_bid: amount,
           current_bidder_team_id: joinedTeam.id,
-          timer_remaining: 20,
+          auction_end_time: new Date(Date.now() + 20000).toISOString(),
         })
 
       if (error) {
@@ -576,6 +499,15 @@ export default function ParticipantPage() {
       }
 
       await addLog(`[${joinedTeam.name} - ${amount}포인트 입찰]`)
+
+      if (bidSound) {
+        bidSound.currentTime = 0
+        bidSound.volume = 0.35
+        bidSound.play().catch(() => {
+          // autoplay block ignore
+        })
+      }
+
       setBidInput('')
       await loadData()
     } finally {
@@ -583,14 +515,48 @@ export default function ParticipantPage() {
     }
   }
 
-  const activeCurrentBid = mode === 'landmark' ? landmarkState.current_bid : playerState.current_bid
-  const activeTimer = mode === 'landmark' ? landmarkState.timer_remaining : playerState.timer_remaining
-  const activeStatus = mode === 'landmark' ? landmarkState.status : playerState.status
-  const activeBidder = mode === 'landmark' ? currentLandmarkBidder : currentPlayerBidder
-  const activeCanBid = mode === 'landmark' ? canBidLandmark : canBidPlayer
-  const limitText = mode === 'landmark'
-    ? `${myLandmarks.length}/2 랜드마크 보유`
-    : `${myPlayers.length}/3 플레이어 보유`
+  const activeCurrentBid = playerState.current_bid
+  const activeTimer = playerState.timer_remaining
+  const activeStatus = playerState.status
+  const activeBidder = currentPlayerBidder
+  const activeCanBid = canBidPlayer
+  const limitText = `${myPlayers.length}/3 플레이어 보유`
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (playerState.status !== 'running' || !playerState.auction_end_time) {
+        return
+      }
+
+      const remain = getRemainSeconds(
+        playerState.auction_end_time,
+        playerState.status,
+        playerState.timer_remaining
+      )
+
+      setPlayerState((prev) =>
+        prev.timer_remaining === remain ? prev : { ...prev, timer_remaining: remain }
+      )
+    }, 250)
+
+    return () => clearInterval(interval)
+  }, [
+    playerState.status,
+    playerState.auction_end_time,
+    playerState.timer_remaining,
+  ])
+
+  useEffect(() => {
+    if (!countdownSound) return
+
+    if (activeStatus === 'running' && activeTimer === 5) {
+      countdownSound.currentTime = 0
+      countdownSound.volume = 0.7
+      countdownSound.play().catch(() => {
+        // autoplay block ignore
+      })
+    }
+  }, [activeTimer, activeStatus])
 
   return (
     <main className="min-h-screen bg-background p-4 text-white">
@@ -604,6 +570,7 @@ export default function ParticipantPage() {
           display: none;
         }
       `}</style>
+
       <div className="mx-auto max-w-[1540px] space-y-4">
         <header className="flex items-center justify-between border-b border-border pb-4">
           <div className="flex items-center gap-3">
@@ -614,7 +581,7 @@ export default function ParticipantPage() {
             </Link>
             <div>
               <h1 className="text-2xl font-black">참가자</h1>
-              <p className="text-sm text-muted-foreground">팀 코드 1번 입력 후 인원/랜드마크 경매를 여기서 입찰합니다.</p>
+              <p className="text-sm text-muted-foreground">팀 코드 1번 입력 후 인원 경매를 여기서 입찰합니다.</p>
             </div>
           </div>
 
@@ -663,17 +630,11 @@ export default function ParticipantPage() {
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-xl font-black">현재 경매</h2>
               <span className="rounded bg-primary px-3 py-1 text-sm font-black text-white">
-                {mode === 'landmark' ? '랜드마크 경매' : mode === 'results' ? '결과 화면' : '인원 경매'}
+                {mode === 'results' ? '결과 화면' : '인원 경매'}
               </span>
             </div>
 
-            {mode === 'landmark' ? (
-              currentLandmark ? (
-                <CurrentLandmarkCard landmark={currentLandmark} />
-              ) : (
-                <EmptyCurrent text="현재 경매 중인 랜드마크가 없습니다." />
-              )
-            ) : currentPlayer ? (
+            {currentPlayer ? (
               <CurrentPlayerCard player={currentPlayer} />
             ) : (
               <EmptyCurrent text="현재 경매 중인 선수가 없습니다." />
@@ -682,7 +643,15 @@ export default function ParticipantPage() {
             <div className="mt-5 grid grid-cols-3 gap-3 text-center">
               <InfoBox label="현재 입찰" value={`${activeCurrentBid || 0}P`} />
               <InfoBox label="입찰 팀" value={activeBidder?.name || '없음'} />
-              <InfoBox label="남은 시간" value={`${activeTimer || 0}초`} />
+              <InfoBox
+                label="남은 시간"
+                value={`${activeTimer || 0}초`}
+                valueClassName={
+                  activeStatus === 'running' && activeTimer <= 5
+                    ? 'text-red-500 animate-pulse'
+                    : 'text-white'
+                }
+              />
             </div>
           </div>
 
@@ -712,12 +681,8 @@ export default function ParticipantPage() {
               <div className="rounded-lg border border-border bg-background/50 p-3 text-sm font-bold text-muted-foreground">
                 <p>상태: {activeStatus === 'running' ? '진행중' : activeStatus === 'paused' ? '정지' : '대기'}</p>
                 <p>인원 경매는 팀당 3명, 같은 티어는 1명까지만 입찰할 수 있습니다.</p>
-                <p>랜드마크 경매는 팀당 2개, 같은 맵은 1개까지만 입찰할 수 있습니다.</p>
-                {joinedTeam && mode !== 'landmark' && currentPlayer && hasSameTierPlayer(myPlayers, currentPlayer) && (
+                {joinedTeam && currentPlayer && hasSameTierPlayer(myPlayers, currentPlayer) && (
                   <p className="mt-1 text-primary">현재 선수와 같은 티어를 이미 보유 중이라 입찰할 수 없습니다.</p>
-                )}
-                {joinedTeam && mode === 'landmark' && currentLandmark && hasSameMapLandmark(myLandmarks, currentLandmark) && (
-                  <p className="mt-1 text-primary">현재 랜드마크와 같은 맵을 이미 보유 중이라 입찰할 수 없습니다.</p>
                 )}
               </div>
             </div>
@@ -728,29 +693,15 @@ export default function ParticipantPage() {
             {!joinedTeam ? (
               <p className="text-muted-foreground">팀 코드를 입력하면 내 팀 현황이 표시됩니다.</p>
             ) : (
-              <div className="space-y-4">
-                <div>
-                  <h3 className="mb-2 font-black text-white">낙찰 선수 {myPlayers.length}/3</h3>
-                  <div className="space-y-2">
-                    {myPlayers.length > 0 ? myPlayers.map((player) => (
-                      <div key={player.id} className="flex items-center justify-between rounded bg-secondary px-3 py-2">
-                        <span className="font-bold">{player.name}</span>
-                        <span className={`font-black ${getTierColorClass(player.tier)}`}>{player.tier}</span>
-                      </div>
-                    )) : <p className="text-sm text-muted-foreground">아직 낙찰 선수 없음</p>}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="mb-2 font-black text-white">낙찰 랜드마크 {myLandmarks.length}/2</h3>
-                  <div className="space-y-2">
-                    {myLandmarks.length > 0 ? myLandmarks.map((landmark) => (
-                      <div key={landmark.id} className="flex items-center justify-between rounded bg-secondary px-3 py-2">
-                        <span className="font-bold">{landmark.name}</span>
-                        <span className="text-xs font-black text-primary">{getLandmarkMapName(landmark)}</span>
-                      </div>
-                    )) : <p className="text-sm text-muted-foreground">아직 낙찰 랜드마크 없음</p>}
-                  </div>
+              <div>
+                <h3 className="mb-2 font-black text-white">낙찰 선수 {myPlayers.length}/3</h3>
+                <div className="space-y-2">
+                  {myPlayers.length > 0 ? myPlayers.map((player) => (
+                    <div key={player.id} className="flex items-center justify-between rounded bg-secondary px-3 py-2">
+                      <span className="font-bold">{player.name}</span>
+                      <span className={`font-black ${getTierColorClass(player.tier)}`}>{player.tier}</span>
+                    </div>
+                  )) : <p className="text-sm text-muted-foreground">아직 낙찰 선수 없음</p>}
                 </div>
               </div>
             )}
@@ -760,66 +711,39 @@ export default function ParticipantPage() {
         <section className="grid grid-cols-12 gap-4">
           <div className="col-span-12 rounded-xl border border-border bg-card p-5 lg:col-span-7">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-black text-white">
-                {mode === 'landmark' ? '랜드마크 순서' : '입찰 순서'}
-              </h2>
+              <h2 className="text-xl font-black text-white">입찰 순서</h2>
               <span className="text-lg font-black text-white">
-                1 / {mode === 'landmark' ? Math.max(orderedQueueLandmarks.length, 1) : Math.max(orderedQueuePlayers.length, 1)}
+                1 / {Math.max(orderedQueuePlayers.length, 1)}
               </span>
             </div>
 
             <div className="hidden-scrollbar h-[310px] overflow-y-auto pr-1">
               <div className="grid grid-cols-10 gap-2.5 content-start">
-              {mode === 'landmark' ? (
-                orderedQueueLandmarks.length > 0 ? (
-                  orderedQueueLandmarks.map((landmark, index) => (
-                    <LandmarkQueueCard
-                      key={landmark.id}
-                      landmark={landmark}
+                {orderedQueuePlayers.length > 0 ? (
+                  orderedQueuePlayers.map((player, index) => (
+                    <PlayerQueueCard
+                      key={player.id}
+                      player={player}
                       isCurrent={index === 0}
                     />
                   ))
                 ) : (
-                  <p className="col-span-full py-10 text-center text-muted-foreground">대기 중인 랜드마크가 없습니다.</p>
-                )
-              ) : orderedQueuePlayers.length > 0 ? (
-                orderedQueuePlayers.map((player, index) => (
-                  <PlayerQueueCard
-                    key={player.id}
-                    player={player}
-                    isCurrent={index === 0}
-                  />
-                ))
-              ) : (
-                <p className="col-span-full py-10 text-center text-muted-foreground">대기 중인 선수가 없습니다.</p>
-              )}
+                  <p className="col-span-full py-10 text-center text-muted-foreground">대기 중인 선수가 없습니다.</p>
+                )}
               </div>
             </div>
           </div>
 
           <div className="col-span-12 rounded-xl border border-border bg-card p-5 lg:col-span-2">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-xl font-black">
-                {mode === 'landmark' ? '유찰 랜드마크' : '유찰자 목록'}
-              </h2>
+              <h2 className="text-xl font-black">유찰자 목록</h2>
               <span className="text-sm font-bold text-muted-foreground">
-                {mode === 'landmark' ? `${passedLandmarks.length}개` : `${passedPlayers.length}명`}
+                {passedPlayers.length}명
               </span>
             </div>
 
             <div className="hidden-scrollbar h-[310px] space-y-2 overflow-y-auto pr-1">
-              {mode === 'landmark' ? (
-                passedLandmarks.length > 0 ? (
-                  passedLandmarks.map((landmark) => (
-                    <div key={landmark.id} className="rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-2">
-                      <p className="truncate text-xs font-black text-primary">{getLandmarkMapName(landmark)}</p>
-                      <p className="truncate text-sm font-black text-white">{landmark.name}</p>
-                    </div>
-                  ))
-                ) : (
-                  <p className="py-8 text-center text-sm text-muted-foreground">아직 유찰 랜드마크 없음</p>
-                )
-              ) : passedPlayers.length > 0 ? (
+              {passedPlayers.length > 0 ? (
                 passedPlayers.map((player) => (
                   <div key={player.id} className="flex items-center justify-between rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-2">
                     <span className="truncate text-sm font-black text-white">{player.name}</span>
@@ -873,27 +797,6 @@ function CurrentPlayerCard({ player }: { player: LocalPlayer }) {
   )
 }
 
-function CurrentLandmarkCard({ landmark }: { landmark: LocalLandmark }) {
-  return (
-    <div className="flex gap-4">
-      <div className="h-28 w-28 shrink-0 overflow-hidden rounded-lg bg-secondary">
-        {getLandmarkImage(landmark) ? (
-          <img src={getLandmarkImage(landmark)!} alt={landmark.name} className="h-full w-full object-cover" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-4xl font-black text-muted-foreground">
-            {(landmark.name || '?')[0]}
-          </div>
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-lg font-black text-primary">{getLandmarkMapName(landmark)}</p>
-        <h3 className="truncate text-4xl font-black text-white">{landmark.name}</h3>
-        <p className="text-sm text-muted-foreground">랜드마크 경매 진행중</p>
-      </div>
-    </div>
-  )
-}
-
 function EmptyCurrent({ text }: { text: string }) {
   return (
     <div className="flex h-28 items-center justify-center rounded-lg border border-dashed border-border bg-background/40 text-muted-foreground">
@@ -902,27 +805,47 @@ function EmptyCurrent({ text }: { text: string }) {
   )
 }
 
-function InfoBox({ label, value }: { label: string; value: string }) {
+function InfoBox({
+  label,
+  value,
+  valueClassName = 'text-white',
+}: {
+  label: string
+  value: string
+  valueClassName?: string
+}) {
   return (
     <div className="rounded-lg border border-border bg-background/50 p-3">
       <p className="text-xs font-bold text-muted-foreground">{label}</p>
-      <p className="truncate text-xl font-black text-white">{value}</p>
+      <p className={`truncate text-xl font-black ${valueClassName}`}>{value}</p>
     </div>
   )
 }
 
-
-function PlayerQueueCard({ player, isCurrent }: { player: LocalPlayer; isCurrent: boolean }) {
+function PlayerQueueCard({
+  player,
+  isCurrent,
+}: {
+  player: LocalPlayer
+  isCurrent: boolean
+}) {
   return (
     <div
-      className={`relative aspect-square min-h-[62px] overflow-hidden rounded-md border bg-[#111] ${
-        isCurrent
-          ? 'border-primary ring-2 ring-primary shadow-[0_0_14px_rgba(239,68,68,0.65)]'
-          : 'border-border'
-      }`}
+      className={`
+        relative aspect-square min-h-[62px]
+        overflow-visible
+        rounded-md border bg-[#111]
+        ${getTierBorderClass(player.tier)}
+        ${isCurrent ? 'ring-2 ring-white/40' : ''}
+        transition-all duration-300
+      `}
     >
       {player.image_url ? (
-        <img src={player.image_url} alt={player.name} className="absolute inset-0 h-full w-full object-cover opacity-70" />
+        <img
+          src={player.image_url}
+          alt={player.name}
+          className="absolute inset-0 h-full w-full object-cover opacity-70"
+        />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-secondary text-lg font-black text-muted-foreground">
           {(player.name || '?')[0]}
@@ -938,41 +861,13 @@ function PlayerQueueCard({ player, isCurrent }: { player: LocalPlayer; isCurrent
       )}
 
       <div className="absolute inset-x-1 bottom-1 z-10 rounded bg-black/70 px-1 py-1 text-center">
-        <p className="truncate text-[12px] font-black leading-tight text-white">{player.name}</p>
-        <p className={`mt-0.5 text-[11px] font-black leading-none ${getTierColorClass(player.tier)}`}>{player.tier}</p>
-      </div>
-    </div>
-  )
-}
+        <p className="truncate text-[12px] font-black leading-tight text-white">
+          {player.name}
+        </p>
 
-function LandmarkQueueCard({ landmark, isCurrent }: { landmark: LocalLandmark; isCurrent: boolean }) {
-  return (
-    <div
-      className={`relative aspect-square min-h-[62px] overflow-hidden rounded-md border bg-[#111] ${
-        isCurrent
-          ? 'border-primary ring-2 ring-primary shadow-[0_0_14px_rgba(239,68,68,0.65)]'
-          : 'border-border'
-      }`}
-    >
-      {getLandmarkImage(landmark) ? (
-        <img src={getLandmarkImage(landmark)!} alt={landmark.name} className="absolute inset-0 h-full w-full object-cover opacity-65" />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center bg-secondary text-lg font-black text-muted-foreground">
-          {(landmark.name || '?')[0]}
-        </div>
-      )}
-
-      <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/20 to-black/90" />
-
-      {isCurrent && (
-        <span className="absolute left-1 top-1 z-10 rounded bg-yellow-400 px-1.5 py-0.5 text-[9px] font-black leading-none text-black">
-          현재
-        </span>
-      )}
-
-      <div className="absolute inset-x-1 bottom-1 z-10 rounded bg-black/70 px-1 py-1 text-center">
-        <p className="truncate text-[10px] font-black leading-tight text-primary">{getLandmarkMapName(landmark)}</p>
-        <p className="mt-0.5 truncate text-[12px] font-black leading-tight text-white">{landmark.name}</p>
+        <p className={`mt-0.5 text-[11px] font-black leading-none ${getTierColorClass(player.tier)}`}>
+          {player.tier}
+        </p>
       </div>
     </div>
   )

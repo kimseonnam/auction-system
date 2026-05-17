@@ -36,19 +36,6 @@ export interface Player {
   team?: Team
 }
 
-export interface Landmark {
-  id: string
-  tournament_id: string
-  map_name: string
-  region: string
-  team_id: string | null
-  bid_amount: number
-  is_passed: boolean
-  order_index: number
-  created_at: string
-  team?: Team
-}
-
 export interface AuctionState {
   id: string
   tournament_id: string
@@ -57,27 +44,23 @@ export interface AuctionState {
   current_bidder_team_id: string | null
   timer_remaining: number
   status: 'ready' | 'running' | 'paused' | 'sold' | 'passed'
-  auction_mode: 'player' | 'landmark'
-  current_landmark_id: string | null
+  auction_mode: 'player'
   created_at: string
   updated_at: string
   current_player?: Player
   current_bidder_team?: Team
-  current_landmark?: Landmark
 }
 
 export interface AuctionLog {
   id: string
   tournament_id: string
   player_id: string | null
-  landmark_id?: string | null
   team_id: string | null
   action: 'bid' | 'sold' | 'passed' | 'reset'
   amount: number
   message: string | null
   created_at: string
   player?: Player
-  landmark?: Landmark
   team?: Team
 }
 

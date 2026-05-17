@@ -81,6 +81,15 @@ const normalizePlayer = (player: any): LocalPlayer => ({
   is_captain: Boolean(player.is_captain),
 })
 
+const sortPlayersByNameNumber = (players: LocalPlayer[]) => {
+  return [...players].sort((a, b) =>
+    a.name.localeCompare(b.name, 'ko-KR', {
+      numeric: true,
+      sensitivity: 'base',
+    })
+  )
+}
+
 const PLAYER_IMAGE_BUCKET = 'player-images'
 
 const compressImageToBlob = (file: File): Promise<Blob> => {
@@ -166,7 +175,7 @@ export default function PlayersManagePage() {
     setLoading(true)
 
     const [playersResult, teamsResult] = await Promise.all([
-      supabase.from('players').select('*').order('id', { ascending: true }),
+      supabase.from('players').select('*'),
       supabase.from('teams').select('*').order('id', { ascending: true }),
     ])
 
@@ -174,7 +183,7 @@ export default function PlayersManagePage() {
       console.error('플레이어 불러오기 실패:', playersResult.error)
       alert('플레이어 데이터를 불러오지 못했습니다.')
     } else {
-      setPlayers((playersResult.data || []).map(normalizePlayer))
+      setPlayers(sortPlayersByNameNumber((playersResult.data || []).map(normalizePlayer)))
     }
 
     if (teamsResult.error) {
@@ -263,10 +272,11 @@ export default function PlayersManagePage() {
     }
   }
 
-  const filteredPlayers =
+  const filteredPlayers = sortPlayersByNameNumber(
     tierFilter === 'ALL'
       ? players
       : players.filter((player) => player.tier === tierFilter)
+  )
 
   const handleDeleteAll = async () => {
     if (players.length === 0) {

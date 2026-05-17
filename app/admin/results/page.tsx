@@ -30,33 +30,16 @@ type LocalPlayer = {
   isCaptain?: boolean
 }
 
-type LocalLandmark = {
-  id: string
-  name: string
-  category?: string
-  map?: string
-  image_url?: string | null
-  image?: string | null
-  team_id?: string | null
-  teamId?: string | null
-  bid_amount?: number
-  bidAmount?: number
-  is_passed?: boolean
-  isPassed?: boolean
-}
-
 type LocalTeam = {
   id: string
   name: string
   points: number
-  landmarks?: string[]
   players?: string[]
   player_ids?: string[]
 }
 
 type AuctionSnapshot = {
   teams?: LocalTeam[]
-  landmarks?: LocalLandmark[]
   players?: LocalPlayer[]
   auction_players?: LocalPlayer[]
 }
@@ -189,129 +172,6 @@ const mergePlayers = (...playerGroups: LocalPlayer[][]) => {
   return Array.from(playerMap.values())
 }
 
-const normalizeLandmarks = (value: unknown): LocalLandmark[] => {
-  const rawValue = value as any
-  const flatItems: any[] = []
-
-  const pushChild = (child: any, category: string, childIndex: number) => {
-    if (typeof child === 'string') {
-      flatItems.push({
-        id: `${category}-${childIndex + 1}`,
-        name: child,
-        category,
-        map: category,
-      })
-      return
-    }
-
-    flatItems.push({
-      ...child,
-      category: child?.category || child?.map || child?.map_name || child?.mapName || category,
-      map: child?.map || child?.map_name || child?.mapName || category,
-      id: child?.id || `${category}-${childIndex + 1}`,
-    })
-  }
-
-  if (Array.isArray(rawValue)) {
-    rawValue.forEach((item, groupIndex) => {
-      const children =
-        item?.landmarks ||
-        item?.landmarkItems ||
-        item?.items ||
-        item?.spots ||
-        item?.areas ||
-        item?.locations ||
-        item?.regions ||
-        item?.children ||
-        item?.list ||
-        item?.landmarkList
-
-      const category =
-        item?.category ||
-        item?.map ||
-        item?.map_name ||
-        item?.mapName ||
-        item?.name ||
-        item?.title ||
-        `맵 ${groupIndex + 1}`
-
-      if (Array.isArray(children)) {
-        children.forEach((child: any, childIndex: number) => {
-          pushChild(child, String(category), childIndex)
-        })
-      } else {
-        flatItems.push(item)
-      }
-    })
-  }
-
-  if (!Array.isArray(rawValue) && rawValue && typeof rawValue === 'object') {
-    Object.entries(rawValue).forEach(([category, items]) => {
-      if (Array.isArray(items)) {
-        items.forEach((child: any, childIndex: number) => {
-          pushChild(child, String(category), childIndex)
-        })
-      }
-    })
-  }
-
-  return flatItems.map((landmark, index) => {
-    const category =
-      landmark?.category ||
-      landmark?.map ||
-      landmark?.map_name ||
-      landmark?.mapName ||
-      '랜드마크'
-
-    const name =
-      landmark?.landmark ||
-      landmark?.landmark_name ||
-      landmark?.landmarkName ||
-      landmark?.area ||
-      landmark?.area_name ||
-      landmark?.areaName ||
-      landmark?.region ||
-      landmark?.region_name ||
-      landmark?.regionName ||
-      landmark?.location ||
-      landmark?.location_name ||
-      landmark?.locationName ||
-      landmark?.place ||
-      landmark?.place_name ||
-      landmark?.placeName ||
-      landmark?.spot ||
-      landmark?.spot_name ||
-      landmark?.spotName ||
-      landmark?.label ||
-      landmark?.name ||
-      landmark?.title ||
-      landmark?.value ||
-      landmark?.text ||
-      landmark?.displayName ||
-      `랜드마크 ${index + 1}`
-
-    return {
-      ...landmark,
-      id: typeof landmark?.id === 'string' ? landmark.id : `landmark-${index + 1}`,
-      name: String(name),
-      category: String(category),
-      map: String(category),
-      image_url: landmark?.image_url || landmark?.image || landmark?.imageUrl || null,
-      image: landmark?.image || landmark?.image_url || landmark?.imageUrl || null,
-      team_id: landmark?.team_id || landmark?.teamId || null,
-      bid_amount: Number.isFinite(Number(landmark?.bid_amount ?? landmark?.bidAmount))
-        ? Number(landmark?.bid_amount ?? landmark?.bidAmount)
-        : 0,
-      is_passed: Boolean(landmark?.is_passed ?? landmark?.isPassed),
-    }
-  })
-}
-
-const getLandmarkFullName = (landmark: LocalLandmark) => {
-  const mapName = landmark.category || landmark.map
-  return mapName ? `${mapName} - ${landmark.name}` : landmark.name
-}
-
 const getTeamPlayers = (team: LocalTeam, players: LocalPlayer[]) => {
   const ids = [...(team.players || []), ...(team.player_ids || [])]
 
@@ -340,7 +200,6 @@ const getTeamPlayers = (team: LocalTeam, players: LocalPlayer[]) => {
 export default function ResultsPage() {
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [players, setPlayers] = useState<LocalPlayer[]>([])
-  const [landmarks, setLandmarks] = useState<LocalLandmark[]>([])
   const [page, setPage] = useState(1)
 
   useEffect(() => {
@@ -357,22 +216,8 @@ export default function ResultsPage() {
         ? snapshot.auction_players
         : []
 
-      const savedLandmarks =
-        localStorage.getItem('auction_landmarks') ||
-        localStorage.getItem('landmarks') ||
-        localStorage.getItem('auction_landmark_items')
-
       setTeams(savedTeams.length > 0 ? savedTeams : snapshotTeams)
       setPlayers(mergePlayers(registeredPlayers, auctionPlayers, snapshotPlayers, snapshotAuctionPlayers))
-      setLandmarks(
-        normalizeLandmarks(
-          savedLandmarks
-            ? safeJsonParse<unknown>(savedLandmarks, [])
-            : Array.isArray(snapshot.landmarks)
-            ? snapshot.landmarks
-            : []
-        )
-      )
     }
 
     load()
@@ -404,7 +249,14 @@ export default function ResultsPage() {
   }, [page])
 
   const sortedTeams = useMemo(
-    () => [...teams].sort((a, b) => getTeamNumber(a.id) - getTeamNumber(b.id)),
+    () =>
+      [...teams].sort((a, b) => {
+        const pointDiff = (b.points || 0) - (a.points || 0)
+
+        if (pointDiff !== 0) return pointDiff
+
+        return getTeamNumber(a.id) - getTeamNumber(b.id)
+      }),
     [teams]
   )
 
@@ -438,7 +290,7 @@ export default function ResultsPage() {
             <div>
               <h1 className="text-2xl font-black text-primary">결과창</h1>
               <p className="text-xs text-muted-foreground">
-                팀원 경매 / 랜드마크 경매 최종 결과
+                인원 경매 최종 결과
               </p>
             </div>
           </div>
@@ -452,12 +304,24 @@ export default function ResultsPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
-                localStorage.setItem('auction_mode', 'landmark')
-                window.location.href = '/admin/landmark-auction'
+              onClick={async () => {
+                localStorage.setItem('auction_mode', 'player')
+
+                const { error } = await supabase
+                  .from('auction_state')
+                  .update({
+                    overlay_mode: 'player',
+                  } as any)
+                  .eq('id', 'main')
+
+                if (error) {
+                  console.error('overlay mode change error:', error)
+                }
+
+                window.location.href = '/admin/auction'
               }}
             >
-              랜드마크 경매로 돌아가기
+              플레이어 경매로 돌아가기
             </Button>
 
             {maxPage > 1 && (
@@ -509,13 +373,8 @@ export default function ResultsPage() {
               const teamNumber = page === 1 ? index + 1 : index + 9
               const teamPlayers = getTeamPlayers(team, players)
               const displayPlayers = teamPlayers.slice(0, 4)
-
-              const teamLandmarks = landmarks.filter(
-                (landmark) =>
-                  landmark.team_id === team.id ||
-                  landmark.teamId === team.id ||
-                  team.landmarks?.includes(landmark.id)
-              )
+              const captainPlayer = teamPlayers.find((player) => getRawIsCaptain(player))
+              const teamTitle = captainPlayer?.name || team.name || `${teamNumber}팀`
 
               return (
                 <article
@@ -525,8 +384,11 @@ export default function ResultsPage() {
                 >
                   <div className="flex min-h-0 items-center justify-between gap-3">
                     <div className="flex min-w-0 items-end gap-3">
-                      <h3 className="shrink-0 text-[24px] font-black leading-none text-white">
-                        {teamNumber}팀
+                      <h3
+                        className="shrink-0 max-w-[180px] truncate text-[24px] font-black leading-none text-white"
+                        title={teamTitle}
+                      >
+                        {teamTitle}
                       </h3>
 
                       <div className="flex items-center gap-3 pb-0.5">
@@ -583,7 +445,13 @@ export default function ResultsPage() {
                           )}
 
                           <div className="absolute inset-x-0 bottom-0 bg-black/70 px-2 py-1.5 text-center">
-                            <p className="truncate text-[22px] font-black leading-none text-white" style={{ textShadow: '2px 2px 0 #000, -2px 2px 0 #000, 2px -2px 0 #000, -2px -2px 0 #000, 0 2px 0 #000, 2px 0 0 #000, 0 -2px 0 #000, -2px 0 0 #000' }}>
+                            <p
+                              className="truncate text-[22px] font-black leading-none text-white"
+                              style={{
+                                textShadow:
+                                  '2px 2px 0 #000, -2px 2px 0 #000, 2px -2px 0 #000, -2px -2px 0 #000, 0 2px 0 #000, 2px 0 0 #000, 0 -2px 0 #000, -2px 0 0 #000',
+                              }}
+                            >
                               {player.name}
                             </p>
                             <p className={`text-[14px] font-black leading-none ${getTierTextClass(player.tier)}`}>
@@ -607,13 +475,11 @@ export default function ResultsPage() {
 
                   <div className="flex min-h-0 items-center overflow-hidden rounded-lg border border-[#333] bg-black/40 px-3">
                     <span className="mr-2 shrink-0 text-[16px] font-black text-primary">
-                      [랜드마크]
+                      [팀 정보]
                     </span>
 
                     <p className="truncate text-[18px] font-black text-white">
-                      {teamLandmarks.length > 0
-                        ? teamLandmarks.map((landmark) => getLandmarkFullName(landmark)).join(', ')
-                        : '-'}
+                      낙찰 선수 {displayPlayers.length}/4명
                     </p>
                   </div>
                 </article>

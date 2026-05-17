@@ -15,6 +15,7 @@ import {
   Check,
   X,
   Coins,
+  Trophy,
 } from 'lucide-react'
 
 type LocalPlayer = {
@@ -43,6 +44,7 @@ type LocalAuctionState = {
   current_bid: number
   current_bidder_team_id: string | null
   timer_remaining: number
+  auction_end_time?: string | null
   status: 'ready' | 'running' | 'paused'
 }
 
@@ -113,6 +115,7 @@ const defaultAuctionState: LocalAuctionState = {
   current_bid: 0,
   current_bidder_team_id: null,
   timer_remaining: DEFAULT_TIMER,
+  auction_end_time: null,
   status: 'ready',
 }
 
@@ -163,16 +166,33 @@ const syncCaptainTeamNames = (players: LocalPlayer[], teams: LocalTeam[]) => {
   })
 }
 
-const normalizeAuctionState = (value: any): LocalAuctionState => ({
-  current_player_id: value?.current_player_id ?? null,
-  current_bid: Number(value?.current_bid ?? 0),
-  current_bidder_team_id: value?.current_bidder_team_id ?? null,
-  timer_remaining: Number(value?.timer_remaining ?? DEFAULT_TIMER),
-  status:
+const getRemainSeconds = (endTime?: string | null) => {
+  if (!endTime) return DEFAULT_TIMER
+
+  return Math.max(
+    0,
+    Math.ceil((new Date(endTime).getTime() - Date.now()) / 1000)
+  )
+}
+
+const normalizeAuctionState = (value: any): LocalAuctionState => {
+  const status =
     value?.status === 'running' || value?.status === 'paused' || value?.status === 'ready'
       ? value.status
-      : 'ready',
-})
+      : 'ready'
+
+  return {
+    current_player_id: value?.current_player_id ?? null,
+    current_bid: Number(value?.current_bid ?? 0),
+    current_bidder_team_id: value?.current_bidder_team_id ?? null,
+    auction_end_time: value?.auction_end_time ?? null,
+    timer_remaining:
+      status === 'running'
+        ? getRemainSeconds(value?.auction_end_time ?? null)
+        : DEFAULT_TIMER,
+    status,
+  }
+}
 
 export default function AuctionPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
@@ -311,13 +331,14 @@ export default function AuctionPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadAuctionData)
       .subscribe()
 
-    const pollingInterval = setInterval(loadAuctionData, 1200)
 
-    return () => {
-      clearInterval(pollingInterval)
-      supabase.removeChannel(channel)
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
+return () => {
+  supabase.removeChannel(channel)
+
+  if (timerRef.current) {
+    clearInterval(timerRef.current)
+  }
+}
   }, [loadAuctionData])
 
   const savePlayers = async (nextPlayers: LocalPlayer[]) => {
@@ -340,13 +361,28 @@ export default function AuctionPage() {
   }
 
   const saveAuctionState = async (nextState: LocalAuctionState) => {
-    auctionStateRef.current = nextState
-    setAuctionState(nextState)
-    saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, nextState, logsRef.current)
+    const safeState: LocalAuctionState = {
+      ...nextState,
+      timer_remaining:
+        nextState.status === 'running' && nextState.auction_end_time
+          ? Math.max(
+              0,
+              Math.ceil(
+                (new Date(nextState.auction_end_time).getTime() - Date.now()) / 1000
+              )
+            )
+          : nextState.timer_remaining ?? DEFAULT_TIMER,
+    }
+
+    auctionStateRef.current = safeState
+    setAuctionState(safeState)
+    saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, safeState, logsRef.current)
+
+    const { timer_remaining, ...dbState } = safeState
 
     const { error } = await supabase
       .from('auction_state')
-      .upsert({ id: 'main', ...nextState })
+      .upsert({ id: 'main', ...dbState })
 
     if (error) console.error('auction_state save error:', error)
   }
@@ -415,18 +451,6 @@ export default function AuctionPage() {
     setJoinCodeError('')
   }
 
-  const openLandmarkAuction = async () => {
-    localStorage.setItem('auction_mode', 'landmark')
-
-    const { error } = await supabase
-      .from('auction_state')
-      .update({ overlay_mode: 'landmark' })
-      .eq('id', 'main')
-
-    if (error) console.error('overlay mode update error:', error)
-
-    window.open('/admin/landmark-auction', '_self')
-  }
 
   const auctionPlayers = players.filter((player) => !player.is_captain)
   const currentPlayer = auctionPlayers.find((p) => p.id === auctionState.current_player_id)
@@ -586,6 +610,7 @@ export default function AuctionPage() {
       current_bid: 0,
       current_bidder_team_id: null,
       timer_remaining: DEFAULT_TIMER,
+      auction_end_time: null,
       status: nextPlayer ? 'paused' : 'ready',
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -598,81 +623,43 @@ export default function AuctionPage() {
     })
   }
 
-  useEffect(() => {
-    if (!isAdmin || auctionState.status !== 'running') {
-      if (timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
-      }
-      releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
-      return
-    }
+useEffect(() => {
+  if (auctionState.status !== 'running') return
+  const interval = setInterval(() => {
+    if (!auctionState.auction_end_time) return
 
-    if (timerRef.current) return
-    if (!claimTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)) return
+    const remain = Math.max(
+      0,
+      Math.ceil(
+        (
+          new Date(
+            auctionState.auction_end_time
+          ).getTime() - Date.now()
+        ) / 1000
+      )
+    )
 
-    timerRef.current = setInterval(async () => {
-      if (!claimTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)) {
-        if (timerRef.current) {
-          clearInterval(timerRef.current)
-          timerRef.current = null
-        }
-        return
-      }
+setAuctionState((prev) => {
+  if (
+    prev.timer_remaining === remain &&
+    !(remain <= 0 && prev.status !== 'paused')
+  ) {
+    return prev
+  }
 
-      const prev = auctionStateRef.current
+  return {
+    ...prev,
+    timer_remaining: remain,
+    status: remain <= 0 ? 'paused' : prev.status,
+  }
+})
+  }, 250)
 
-      if (prev.status !== 'running') {
-        if (timerRef.current) {
-          clearInterval(timerRef.current)
-          timerRef.current = null
-        }
-        releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
-        return
-      }
-
-      const nextTime = Math.max(0, prev.timer_remaining - 1)
-      const nextStatus = nextTime <= 0 ? 'paused' : 'running'
-
-      const nextState: LocalAuctionState = {
-        ...prev,
-        timer_remaining: nextTime,
-        status: nextStatus,
-      }
-
-      auctionStateRef.current = nextState
-      setAuctionState(nextState)
-      saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, nextState, logsRef.current)
-
-      // 중요:
-      // 타이머는 timer_remaining/status만 저장합니다.
-      // current_bid/current_bidder_team_id/current_player_id까지 같이 저장하면
-      // 참가자 입찰과 0초 저장이 겹칠 때 입찰 팀 정보가 사라질 수 있습니다.
-      const { error } = await supabase
-        .from('auction_state')
-        .update({
-          timer_remaining: nextTime,
-          status: nextStatus,
-        })
-        .eq('id', 'main')
-
-      if (error) console.error('timer save error:', error)
-
-      if (nextTime <= 0 && timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
-        releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
-      }
-    }, 1000)
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
-      }
-      releaseTimerOwner(PLAYER_TIMER_OWNER_KEY, timerOwnerIdRef.current)
-    }
-  }, [auctionState.status, isAdmin, saveLocalOverlaySnapshot])
+  return () => clearInterval(interval)
+}, [
+  auctionState.auction_end_time,
+  auctionState.status,
+])
 
   const handleStart = async () => {
     if (!isAdmin) return
@@ -691,18 +678,34 @@ export default function AuctionPage() {
         current_player_id: firstPlayer.id,
         current_bid: 0,
         current_bidder_team_id: null,
+        
         timer_remaining: DEFAULT_TIMER,
+        
+        auction_end_time: new Date(
+          Date.now() + 20000
+        ).toISOString(),
+
         status: 'running',
       })
       return
     }
 
-    await updateAuctionState({ status: 'running' })
+    await updateAuctionState({
+  status: 'running',
+
+  auction_end_time: new Date(
+    Date.now() + 20000
+  ).toISOString(),
+
+})
   }
 
   const handlePause = async () => {
     if (!isAdmin) return
-    await updateAuctionState({ status: 'paused' })
+    await updateAuctionState({
+  status: 'paused',
+  auction_end_time: null,
+})
   }
 
   const handleSold = async () => {
@@ -746,6 +749,7 @@ export default function AuctionPage() {
       current_bid: 0,
       current_bidder_team_id: null,
       timer_remaining: DEFAULT_TIMER,
+      auction_end_time: null,
       status: nextPlayer ? 'paused' : 'ready',
     })
   }
@@ -765,13 +769,14 @@ export default function AuctionPage() {
 
     const nextPlayer = nextPlayers.find(isAuctionTargetPlayer)
 
-    await saveAuctionState({
-      current_player_id: nextPlayer?.id || null,
-      current_bid: 0,
-      current_bidder_team_id: null,
-      timer_remaining: DEFAULT_TIMER,
-      status: nextPlayer ? 'paused' : 'ready',
-    })
+ await saveAuctionState({
+  current_player_id: nextPlayer?.id || null,
+  current_bid: 0,
+  current_bidder_team_id: null,
+  timer_remaining: DEFAULT_TIMER,
+  auction_end_time: null,
+  status: nextPlayer ? 'paused' : 'ready',
+})
   }
 
   const handleBid = async (team: LocalTeam, amount: number) => {
@@ -780,7 +785,12 @@ export default function AuctionPage() {
       return
     }
 
-    const wonPlayerCount = playersRef.current.filter(
+    const latestState = auctionStateRef.current
+    const latestPlayers = playersRef.current
+    const latestTeams = teamsRef.current
+    const latestTeam = latestTeams.find((t) => t.id === team.id) || team
+
+    const wonPlayerCount = latestPlayers.filter(
       (player) => player.team_id === team.id && !player.is_captain
     ).length
 
@@ -789,11 +799,11 @@ export default function AuctionPage() {
       return
     }
 
-    const ownedPlayers = playersRef.current.filter(
+    const ownedPlayers = latestPlayers.filter(
       (player) => player.team_id === team.id && !player.is_captain
     )
-    const currentAuctionPlayer = playersRef.current.find(
-      (player) => player.id === auctionState.current_player_id
+    const currentAuctionPlayer = latestPlayers.find(
+      (player) => player.id === latestState.current_player_id
     )
 
     if (hasSameTierPlayer(ownedPlayers, currentAuctionPlayer)) {
@@ -801,23 +811,25 @@ export default function AuctionPage() {
       return
     }
 
-    if (auctionState.status !== 'running' || auctionState.timer_remaining <= 0) {
+    if (latestState.status !== 'running' || latestState.timer_remaining <= 0) {
       alert('입찰 시간이 종료되었습니다.')
       return
     }
 
-    if (amount <= auctionState.current_bid) return
-    if (team.points < amount) return
+    if (amount <= latestState.current_bid) return
+    if ((latestTeam.points ?? 0) < amount) return
 
     const nextState: LocalAuctionState = {
-      ...auctionState,
+      ...latestState,
       current_bid: amount,
       current_bidder_team_id: team.id,
+      auction_end_time: new Date(Date.now() + DEFAULT_TIMER * 1000).toISOString(),
       timer_remaining: DEFAULT_TIMER,
+      status: 'running',
     }
 
     await saveAuctionState(nextState)
-    await addLog('bid', `[${team.name} - ${amount}포인트 입찰]`)
+    await addLog('bid', `[${latestTeam.name} - ${amount}포인트 입찰]`)
   }
 
   const handlePrevPlayer = async () => {
@@ -833,13 +845,14 @@ export default function AuctionPage() {
 
     await clearAuctionLogs()
 
-    await saveAuctionState({
-      current_player_id: prevPlayer.id,
-      current_bid: 0,
-      current_bidder_team_id: null,
-      timer_remaining: DEFAULT_TIMER,
-      status: 'paused',
-    })
+ await saveAuctionState({
+  current_player_id: prevPlayer.id,
+  current_bid: 0,
+  current_bidder_team_id: null,
+  timer_remaining: DEFAULT_TIMER,
+  auction_end_time: null,
+  status: 'paused',
+})
   }
 
   const handleNextPlayer = async () => {
@@ -854,8 +867,11 @@ export default function AuctionPage() {
       current_player_id: nextPlayer.id,
       current_bid: 0,
       current_bidder_team_id: null,
-      timer_remaining: DEFAULT_TIMER,
-      status: 'paused',
+      
+timer_remaining: DEFAULT_TIMER,
+      
+auction_end_time: null,
+status: 'paused',
     })
   }
 
@@ -869,8 +885,11 @@ export default function AuctionPage() {
       current_player_id: player.id,
       current_bid: 0,
       current_bidder_team_id: null,
-      timer_remaining: DEFAULT_TIMER,
-      status: 'paused',
+      
+timer_remaining: DEFAULT_TIMER,
+      
+auction_end_time: null,
+status: 'paused',
     })
   }
 
@@ -912,8 +931,11 @@ export default function AuctionPage() {
         current_player_id: shuffled[0].id,
         current_bid: 0,
         current_bidder_team_id: null,
-        timer_remaining: DEFAULT_TIMER,
-        status: 'paused',
+        
+timer_remaining: DEFAULT_TIMER,
+        
+auction_end_time: null,
+status: 'paused',
       })
     }
   }
@@ -948,8 +970,11 @@ export default function AuctionPage() {
       current_player_id: firstPlayer?.id || null,
       current_bid: 0,
       current_bidder_team_id: null,
-      timer_remaining: DEFAULT_TIMER,
-      status: 'ready',
+      
+timer_remaining: DEFAULT_TIMER,
+      
+auction_end_time: null,
+status: 'ready',
     })
 
     await clearAuctionLogs()
@@ -991,35 +1016,53 @@ export default function AuctionPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {isAdmin && (
-              <Button variant="outline" size="sm" onClick={() => window.open('/overlay', '_blank')}>
-                OBS 화면 열기
-              </Button>
-            )}
+<div className="flex items-center gap-2">
+  {isAdmin && (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => window.open('/overlay', '_blank')}
+    >
+      OBS 화면 열기
+    </Button>
+  )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={openLandmarkAuction}
-            >
-              랜드마크 경매
-            </Button>
+  {isAdmin && (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={openPointPanel}
+    >
+      <Coins className="mr-1 h-4 w-4" />
+      개별 포인트 지급
+    </Button>
+  )}
 
-            {isAdmin && (
-              <Button variant="outline" size="sm" onClick={openPointPanel}>
-                <Coins className="mr-1 h-4 w-4" />
-                개별 포인트 지급
-              </Button>
-            )}
+  {isAdmin && (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={handleShufflePlayers}
+    >
+      <Shuffle className="mr-1 h-4 w-4" />
+      랜덤 경매 순서 돌리기
+    </Button>
+  )}
 
-            {isAdmin && (
-              <Button variant="outline" size="sm" onClick={handleShufflePlayers}>
-                <Shuffle className="mr-1 h-4 w-4" />
-                랜덤 경매 순서 돌리기
-              </Button>
-            )}
-          </div>
+  {isAdmin && (
+<Button
+  variant="outline"
+  size="sm"
+  onClick={() => {
+    localStorage.setItem('auction_mode', 'results')
+    window.location.href = '/admin/results'
+  }}
+>
+  <Trophy className="mr-1 h-4 w-4" />
+  결과창
+</Button>
+  )}
+</div>
         </div>
 
         {!isAdmin && (

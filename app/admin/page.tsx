@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Lock, ArrowLeft, Users, Map, Play, Settings, LogOut } from 'lucide-react'
+import { Lock, ArrowLeft, Users, Play, Settings, LogOut } from 'lucide-react'
 import { supabase } from '@/lib/supabase/client'
 
 const ADMIN_CODE = '1234'
@@ -22,15 +22,23 @@ export default function AdminPage() {
   const [error, setError] = useState('')
   const [playerCount, setPlayerCount] = useState(0)
   const [teamCount, setTeamCount] = useState(0)
-  const [landmarkCount, setLandmarkCount] = useState(0)
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [tournamentName, setTournamentName] = useState('경매 시스템')
 
+  const isTeamActuallyConnected = (team: LocalTeam) => {
+    if (!team.is_connected || !team.connected_at) {
+      return false
+    }
+
+    const connectedTime = new Date(team.connected_at).getTime()
+
+    return Date.now() - connectedTime < 5000
+  }
+
   const refreshCounts = useCallback(async () => {
-    const [playersResult, teamsResult, landmarksResult, teamsDataResult] = await Promise.all([
+    const [playersResult, teamsResult, teamsDataResult] = await Promise.all([
       supabase.from('players').select('id', { count: 'exact', head: true }),
       supabase.from('teams').select('id', { count: 'exact', head: true }),
-      supabase.from('landmarks').select('id', { count: 'exact', head: true }),
       supabase
         .from('teams')
         .select('id, name, is_connected, connected_at')
@@ -49,24 +57,34 @@ export default function AdminPage() {
       setTeamCount(teamsResult.count || 0)
     }
 
-    if (landmarksResult.error) {
-      console.error('랜드마크 수 불러오기 실패:', landmarksResult.error)
-    } else {
-      setLandmarkCount(landmarksResult.count || 0)
-    }
-
     if (teamsDataResult.error) {
       console.error('팀 연결 상태 불러오기 실패:', teamsDataResult.error)
     } else {
       setTeams(
-  ((teamsDataResult.data || []) as LocalTeam[]).sort((a, b) => {
-    const aNum = Number(a.id.replace('team-', ''))
-    const bNum = Number(b.id.replace('team-', ''))
-    return aNum - bNum
-  })
-)
+        ((teamsDataResult.data || []) as LocalTeam[]).sort((a, b) => {
+          const aNum = Number(a.id.replace('team-', ''))
+          const bNum = Number(b.id.replace('team-', ''))
+          return aNum - bNum
+        })
+      )
     }
   }, [])
+
+  const loadSettings = async () => {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('tournament_name')
+      .single()
+
+    if (error) {
+      console.error('대회명 불러오기 실패:', error)
+      return
+    }
+
+    if (data?.tournament_name) {
+      setTournamentName(data.tournament_name)
+    }
+  }
 
   useEffect(() => {
     const storedAuth = sessionStorage.getItem('admin_authenticated')
@@ -83,14 +101,14 @@ export default function AdminPage() {
       .channel('admin-dashboard-counts')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, refreshCounts)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, refreshCounts)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, refreshCounts)
       .subscribe()
 
-      const interval = setInterval(() => {
-        refreshCounts()
-      }, 3000)
+    const interval = setInterval(() => {
+      refreshCounts()
+    }, 3000)
 
     return () => {
+      clearInterval(interval)
       supabase.removeChannel(channel)
     }
   }, [refreshCounts])
@@ -115,22 +133,6 @@ export default function AdminPage() {
     sessionStorage.removeItem('auction_role')
     setAdminCode('')
   }
-
-  const loadSettings = async () => {
-  const { data, error } = await supabase
-    .from('settings')
-    .select('tournament_name')
-    .single()
-
-  if (error) {
-    console.error('대회명 불러오기 실패:', error)
-    return
-  }
-
-  if (data?.tournament_name) {
-    setTournamentName(data.tournament_name)
-  }
-}
 
   if (!isAuthenticated) {
     return (
@@ -235,12 +237,21 @@ export default function AdminPage() {
             description="플레이어 추가, 수정, 삭제"
           />
 
-          <DashboardCard
-            href="/admin/landmarks"
-            icon={<Map className="w-8 h-8 text-primary" />}
-            title="랜드마크 관리"
-            description="맵 랜드마크 추가, 수정, 삭제"
-          />
+          <div className="opacity-60 cursor-not-allowed">
+            <div className="bg-card border border-border rounded-2xl p-8 min-h-[210px] h-full">
+              <div className="p-4 bg-primary/10 rounded-xl w-fit mb-6">
+                <Settings className="w-8 h-8 text-primary" />
+              </div>
+
+              <h3 className="text-2xl font-black mb-3 text-white">
+                추가 기능
+              </h3>
+
+              <p className="text-muted-foreground text-base leading-relaxed">
+                기능 추가 예정
+              </p>
+            </div>
+          </div>
 
           <DashboardCard
             href="/admin/settings"
@@ -250,10 +261,9 @@ export default function AdminPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
           <QuickStat label="등록 플레이어" count={playerCount} />
           <QuickStat label="등록 팀" count={teamCount} />
-          <QuickStat label="랜드마크" count={landmarkCount} />
           <QuickStat label="기본 포인트" count={0} />
         </div>
 
@@ -271,7 +281,7 @@ export default function AdminPage() {
                 <div className="flex items-center justify-between">
                   <p className="font-black text-white">{team.name}</p>
 
-                  {team.is_connected ? (
+                  {isTeamActuallyConnected(team) ? (
                     <span className="text-green-400 text-sm font-black">
                       ● 접속 중
                     </span>

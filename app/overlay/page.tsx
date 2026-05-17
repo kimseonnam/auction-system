@@ -15,7 +15,6 @@ type LocalTeam = {
   id: string
   name: string
   points: number
-  landmarks?: string[]
   players?: string[]
   player_ids?: string[]
 }
@@ -39,37 +38,14 @@ type LocalPlayer = {
   auction_order?: number | null
 }
 
-type LocalLandmark = {
-  id: string
-  name: string
-  image_url?: string | null
-  image?: string | null
-  team_id?: string | null
-  teamId?: string | null
-  bid_amount?: number
-  bidAmount?: number
-  is_passed?: boolean
-  isPassed?: boolean
-  category?: string
-  map?: string
-  auction_order?: number | null
-}
-
 type LocalAuctionState = {
   current_player_id: string | null
   current_bid: number
   current_bidder_team_id: string | null
+  auction_end_time?: string | null
   timer_remaining: number
   status: 'ready' | 'running' | 'paused'
   overlay_mode?: AuctionMode | null
-}
-
-type LandmarkAuctionState = {
-  current_landmark_id: string | null
-  current_bid: number
-  current_bidder_team_id: string | null
-  timer_remaining: number
-  status: 'ready' | 'running' | 'paused'
 }
 
 type LocalAuctionLog = {
@@ -86,14 +62,7 @@ type PopupState = {
   amount?: string
 }
 
-type AuctionMode = 'player' | 'landmark' | 'results'
-
-type AuctionSnapshot = {
-  teams?: LocalTeam[]
-  landmarks?: LocalLandmark[]
-  players?: LocalPlayer[]
-  auction_players?: LocalPlayer[]
-}
+type AuctionMode = 'player' | 'results'
 
 const DEFAULT_SETTINGS: LocalSettings = {
   name: '경매 시스템',
@@ -107,21 +76,24 @@ const DEFAULT_AUCTION_STATE: LocalAuctionState = {
   current_player_id: null,
   current_bid: 0,
   current_bidder_team_id: null,
+  auction_end_time: null,
   timer_remaining: 20,
   status: 'ready',
 }
 
-const DEFAULT_LANDMARK_AUCTION_STATE: LandmarkAuctionState = {
-  current_landmark_id: null,
-  current_bid: 0,
-  current_bidder_team_id: null,
-  timer_remaining: 20,
-  status: 'ready',
+
+const getRemainSeconds = (endTime?: string | null, status?: string, fallback = 20) => {
+  if (status !== 'running' || !endTime) return fallback
+
+  const end = new Date(endTime).getTime()
+  if (Number.isNaN(end)) return fallback
+
+  return Math.max(0, Math.ceil((end - Date.now()) / 1000))
 }
 
 
 const normalizeAuctionMode = (value: unknown): AuctionMode | null => {
-  if (value === 'player' || value === 'landmark' || value === 'results') return value
+  if (value === 'player' || value === 'results') return value
   return null
 }
 
@@ -170,18 +142,6 @@ const getTierBorderClass = (tier?: string) => {
     default:
       return 'border-[#2a2a2a]'
   }
-}
-
-const getLandmarkImage = (landmark?: LocalLandmark | null) =>
-  landmark?.image_url || landmark?.image || null
-
-const getLandmarkMapName = (landmark?: LocalLandmark | null) =>
-  landmark?.category || landmark?.map || '맵'
-
-const getLandmarkFullName = (landmark?: LocalLandmark | null) => {
-  if (!landmark) return '랜드마크 선택 대기'
-  const mapName = getLandmarkMapName(landmark)
-  return mapName ? `${mapName} / ${landmark.name}` : landmark.name
 }
 
 const getTeamNumber = (teamId?: string | null) => {
@@ -312,135 +272,8 @@ const chunkArray = <T,>(items: T[], size: number): T[][] => {
   return chunks
 }
 
-const normalizeLandmarks = (value: unknown): LocalLandmark[] => {
-  const rawValue = value as any
-  const flatItems: any[] = []
-
-  const pushChild = (child: any, category: string, childIndex: number) => {
-    if (typeof child === 'string') {
-      flatItems.push({
-        id: `${category}-${childIndex + 1}`,
-        name: child,
-        category,
-        map: category,
-      })
-      return
-    }
-
-    flatItems.push({
-      ...child,
-      category: child?.category || child?.map || child?.map_name || child?.mapName || category,
-      map: child?.map || child?.map_name || child?.mapName || category,
-      id: child?.id || `${category}-${childIndex + 1}`,
-    })
-  }
-
-  if (Array.isArray(rawValue)) {
-    rawValue.forEach((item, groupIndex) => {
-      const children =
-        item?.landmarks ||
-        item?.landmarkItems ||
-        item?.items ||
-        item?.spots ||
-        item?.areas ||
-        item?.locations ||
-        item?.regions ||
-        item?.children ||
-        item?.list ||
-        item?.landmarkList
-
-      const category =
-        item?.category ||
-        item?.map ||
-        item?.map_name ||
-        item?.mapName ||
-        item?.name ||
-        item?.title ||
-        `맵 ${groupIndex + 1}`
-
-      if (Array.isArray(children)) {
-        children.forEach((child: any, childIndex: number) => {
-          pushChild(child, String(category), childIndex)
-        })
-      } else {
-        flatItems.push(item)
-      }
-    })
-  }
-
-  if (!Array.isArray(rawValue) && rawValue && typeof rawValue === 'object') {
-    Object.entries(rawValue).forEach(([category, items]) => {
-      if (Array.isArray(items)) {
-        items.forEach((child: any, childIndex: number) => {
-          pushChild(child, String(category), childIndex)
-        })
-      }
-    })
-  }
-
-  return flatItems.map((landmark, index) => {
-    const category =
-      landmark?.category ||
-      landmark?.map ||
-      landmark?.map_name ||
-      landmark?.mapName ||
-      '랜드마크'
-
-    const name =
-      landmark?.landmark ||
-      landmark?.landmark_name ||
-      landmark?.landmarkName ||
-      landmark?.landmark_title ||
-      landmark?.landmarkTitle ||
-      landmark?.area ||
-      landmark?.area_name ||
-      landmark?.areaName ||
-      landmark?.region ||
-      landmark?.region_name ||
-      landmark?.regionName ||
-      landmark?.location ||
-      landmark?.location_name ||
-      landmark?.locationName ||
-      landmark?.place ||
-      landmark?.place_name ||
-      landmark?.placeName ||
-      landmark?.spot ||
-      landmark?.spot_name ||
-      landmark?.spotName ||
-      landmark?.label ||
-      landmark?.name ||
-      landmark?.title ||
-      landmark?.value ||
-      landmark?.text ||
-      landmark?.content ||
-      landmark?.displayName ||
-      landmark?.subName ||
-      landmark?.pointName ||
-      landmark?.point_name ||
-      `랜드마크 ${index + 1}`
-
-    return {
-      ...landmark,
-      id: typeof landmark?.id === 'string' ? landmark.id : `landmark-${index + 1}`,
-      name: String(name),
-      image_url: landmark?.image_url || landmark?.image || landmark?.imageUrl || null,
-      image: landmark?.image || landmark?.image_url || landmark?.imageUrl || null,
-      team_id: landmark?.team_id || landmark?.teamId || null,
-      bid_amount: Number.isFinite(Number(landmark?.bid_amount ?? landmark?.bidAmount))
-        ? Number(landmark?.bid_amount ?? landmark?.bidAmount)
-        : 0,
-      is_passed: Boolean(landmark?.is_passed ?? landmark?.isPassed),
-      category: String(category),
-      map: String(category),
-    }
-  })
-}
-
 const normalizeTeams = (teams: LocalTeam[]) =>
-  (Array.isArray(teams) ? teams : []).map((team) => ({
-    ...team,
-    landmarks: Array.isArray(team.landmarks) ? team.landmarks : [],
-  }))
+  Array.isArray(teams) ? teams : []
 
 const playPopupSound = (type: 'sold' | 'passed') => {
   try {
@@ -531,12 +364,9 @@ export default function OverlayPage() {
   const [settings, setSettings] = useState<LocalSettings>(DEFAULT_SETTINGS)
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [players, setPlayers] = useState<LocalPlayer[]>([])
-  const [landmarks, setLandmarks] = useState<LocalLandmark[]>([])
   const [auctionMode, setAuctionMode] = useState<AuctionMode>('player')
   const [auctionState, setAuctionState] = useState<LocalAuctionState>(DEFAULT_AUCTION_STATE)
-  const [landmarkAuctionState, setLandmarkAuctionState] = useState<LandmarkAuctionState>(DEFAULT_LANDMARK_AUCTION_STATE)
   const [logs, setLogs] = useState<LocalAuctionLog[]>([])
-  const [landmarkLogs, setLandmarkLogs] = useState<LocalAuctionLog[]>([])
   const [popup, setPopup] = useState<PopupState | null>(null)
 
   const lastPopupLogIdRef = useRef<string | null>(null)
@@ -550,6 +380,8 @@ export default function OverlayPage() {
   const isPlayingBidSoundQueueRef = useRef(false)
   const bidSoundReadyRef = useRef(false)
   const bidSoundTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const lastCountdownSecondRef = useRef<number | null>(null)
+  const countdownSoundRef = useRef<HTMLAudioElement | null>(null)
 
   const playBidSound = createBidSoundPlayer(bidAudioContextRef)
 
@@ -582,7 +414,7 @@ export default function OverlayPage() {
   const loadOverlayData = async () => {
     readLocalModeAndSettings()
 
-    const [playersResult, teamsResult, auctionStateResult, logsResult, landmarksResult, landmarkStateResult] =
+    const [playersResult, teamsResult, auctionStateResult, logsResult] =
       await Promise.all([
         supabase
           .from('players')
@@ -597,20 +429,12 @@ export default function OverlayPage() {
           .in('action', ['bid', 'sold', 'passed'])
           .order('created_at', { ascending: false })
           .limit(30),
-        supabase
-          .from('landmarks')
-          .select('*')
-          .order('auction_order', { ascending: true, nullsFirst: false })
-          .order('id', { ascending: true }),
-        supabase.from('landmark_auction_state').select('*').eq('id', 'main').maybeSingle(),
       ])
 
     if (playersResult.error) console.error('overlay players load error:', playersResult.error)
     if (teamsResult.error) console.error('overlay teams load error:', teamsResult.error)
     if (auctionStateResult.error) console.error('overlay auction_state load error:', auctionStateResult.error)
     if (logsResult.error) console.error('overlay auction_logs load error:', logsResult.error)
-    if (landmarksResult.error) console.error('overlay landmarks load error:', landmarksResult.error)
-    if (landmarkStateResult.error) console.error('overlay landmark_auction_state load error:', landmarkStateResult.error)
 
     const loadedPlayers = mergePlayers(((playersResult.data || []) as LocalPlayer[]).map(normalizePlayer))
     const loadedTeams = normalizeTeams((teamsResult.data || []) as LocalTeam[])
@@ -619,7 +443,12 @@ export default function OverlayPage() {
           current_player_id: auctionStateResult.data.current_player_id ?? null,
           current_bid: Number(auctionStateResult.data.current_bid ?? 0),
           current_bidder_team_id: auctionStateResult.data.current_bidder_team_id ?? null,
-          timer_remaining: Number(auctionStateResult.data.timer_remaining ?? 20),
+          auction_end_time: auctionStateResult.data.auction_end_time ?? null,
+          timer_remaining: getRemainSeconds(
+            auctionStateResult.data.auction_end_time ?? null,
+            auctionStateResult.data.status,
+            DEFAULT_AUCTION_STATE.timer_remaining
+          ),
           status:
             auctionStateResult.data.status === 'running' ||
             auctionStateResult.data.status === 'paused' ||
@@ -630,36 +459,17 @@ export default function OverlayPage() {
         }
       : DEFAULT_AUCTION_STATE
 
-    const loadedLandmarkState = landmarkStateResult.data
-      ? {
-          current_landmark_id: landmarkStateResult.data.current_landmark_id ?? null,
-          current_bid: Number(landmarkStateResult.data.current_bid ?? 0),
-          current_bidder_team_id: landmarkStateResult.data.current_bidder_team_id ?? null,
-          timer_remaining: Number(landmarkStateResult.data.timer_remaining ?? 20),
-          status:
-            landmarkStateResult.data.status === 'running' ||
-            landmarkStateResult.data.status === 'paused' ||
-            landmarkStateResult.data.status === 'ready'
-              ? landmarkStateResult.data.status
-              : 'ready',
-        }
-      : DEFAULT_LANDMARK_AUCTION_STATE
 
     setTeams(loadedTeams)
     setPlayers(loadedPlayers)
     setAuctionState(loadedAuctionState)
     setLogs((logsResult.data || []) as LocalAuctionLog[])
-    setLandmarks(normalizeLandmarks(landmarksResult.data || []))
-    setLandmarkAuctionState(loadedLandmarkState)
 
     const dbOverlayMode = normalizeAuctionMode((auctionStateResult.data as any)?.overlay_mode)
     if (dbOverlayMode) {
       setAuctionMode(dbOverlayMode)
     }
 
-    // 현재 랜드마크 경매 로그 테이블을 아직 따로 만들지 않았기 때문에,
-    // 랜드마크 모드에서도 공용 auction_logs를 사용합니다.
-    setLandmarkLogs((logsResult.data || []) as LocalAuctionLog[])
   }
 
   useEffect(() => {
@@ -674,17 +484,11 @@ export default function OverlayPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadOverlayData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, loadOverlayData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadOverlayData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmarks' }, loadOverlayData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'landmark_auction_state' }, loadOverlayData)
       .subscribe()
-
-    // Realtime이 늦거나 꺼져 있어도 OBS 화면이 따라오도록 1초마다 보정합니다.
-    const interval = setInterval(loadOverlayData, 1000)
 
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       supabase.removeChannel(channel)
-      clearInterval(interval)
       if (popupTimerRef.current) clearTimeout(popupTimerRef.current)
       if (bidSoundTimerRef.current) clearTimeout(bidSoundTimerRef.current)
       bidAudioContextRef.current?.close().catch(() => {})
@@ -693,8 +497,7 @@ export default function OverlayPage() {
   }, [])
 
   useEffect(() => {
-    const activeLogs = auctionMode === 'landmark' ? landmarkLogs : logs
-    const latest = activeLogs[0]
+    const latest = logs[0]
 
     // 페이지 전환/모드 전환 시 남아있는 마지막 낙찰/유찰 로그로 팝업이 다시 뜨는 문제 방지
     if (lastPopupModeRef.current !== auctionMode) {
@@ -761,12 +564,11 @@ export default function OverlayPage() {
       playPopupSound('passed')
       popupTimerRef.current = setTimeout(() => setPopup(null), 2400)
     }
-  }, [logs, landmarkLogs, auctionMode])
+  }, [logs, auctionMode])
 
 
   useEffect(() => {
-    const activeLogs = auctionMode === 'landmark' ? landmarkLogs : logs
-    const bidLogs = activeLogs
+    const bidLogs = logs
       .filter((log) => log.action === 'bid')
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
@@ -787,11 +589,71 @@ export default function OverlayPage() {
     bidSoundQueueRef.current.push(...newBidLogs)
     processBidSoundQueue()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logs, landmarkLogs, auctionMode])
+  }, [logs, auctionMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const sound = new Audio('/sounds/countdown-tick.mp3')
+    sound.preload = 'auto'
+    countdownSoundRef.current = sound
+
+    return () => {
+      sound.pause()
+      sound.currentTime = 0
+      countdownSoundRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (auctionState.status !== 'running' || !auctionState.auction_end_time) return
+
+      const remain = getRemainSeconds(
+        auctionState.auction_end_time,
+        auctionState.status,
+        auctionState.timer_remaining
+      )
+
+      setAuctionState((prev) =>
+        prev.timer_remaining === remain ? prev : { ...prev, timer_remaining: remain }
+      )
+    }, 250)
+
+    return () => clearInterval(interval)
+  }, [auctionState.status, auctionState.auction_end_time, auctionState.timer_remaining])
+
+  useEffect(() => {
+    const timer = auctionState.timer_remaining
+
+    if (auctionState.status !== 'running' || timer > 5 || timer <= 0) {
+      lastCountdownSecondRef.current = null
+
+      if (countdownSoundRef.current) {
+        countdownSoundRef.current.pause()
+        countdownSoundRef.current.currentTime = 0
+      }
+
+      return
+    }
+
+    if (lastCountdownSecondRef.current === timer) return
+
+    lastCountdownSecondRef.current = timer
+
+    const sound = countdownSoundRef.current
+    if (!sound) return
+
+    sound.pause()
+    sound.currentTime = 0
+    sound.volume = 0.7
+    sound.play().catch(() => {
+      // autoplay block ignore
+    })
+  }, [auctionState.status, auctionState.timer_remaining, auctionState.auction_end_time])
 
   const safeTeams = Array.isArray(teams) ? teams : []
   const safePlayers = Array.isArray(players) ? players : []
-  const safeLandmarks = Array.isArray(landmarks) ? landmarks : []
 
   const auctionPlayers = safePlayers.filter((player) => !player.is_captain)
   const currentPlayer = auctionPlayers.find((player) => player.id === auctionState.current_player_id)
@@ -817,22 +679,6 @@ export default function OverlayPage() {
     return availablePlayers[currentIndex + 1]
   })()
 
-  const currentLandmark = safeLandmarks.find((landmark) => landmark.id === landmarkAuctionState.current_landmark_id)
-  const currentLandmarkBidderTeam = safeTeams.find((team) => team.id === landmarkAuctionState.current_bidder_team_id)
-  const availableLandmarks = safeLandmarks.filter((landmark) => !landmark.team_id && !landmark.is_passed)
-  const orderedQueueLandmarks = currentLandmark
-    ? [
-        currentLandmark,
-        ...availableLandmarks.filter((landmark) => landmark.id !== currentLandmark.id),
-      ]
-    : availableLandmarks
-  const nextLandmark = (() => {
-    const currentIndex = currentLandmark
-      ? availableLandmarks.findIndex((landmark) => landmark.id === currentLandmark.id)
-      : -1
-
-    return availableLandmarks[currentIndex + 1]
-  })()
 
   // Supabase에서 team-1, team-10, team-11 순서로 정렬되어 들어오는 문제를 방지합니다.
   // OBS 오른쪽 팀 목록이 항상 TEAM 1~8 / TEAM 9~16 순서로 보이게 숫자 기준으로 정렬합니다.
@@ -847,252 +693,10 @@ export default function OverlayPage() {
           settings={settings}
           teams={safeTeams}
           players={safePlayers}
-          landmarks={safeLandmarks}
 
         />
         <AuctionPopup popup={popup} />
       </>
-    )
-  }
-
-  if (auctionMode === 'landmark') {
-    return (
-      <OverlayShell settings={settings} teams={safeTeams} footerText="랜드마크 경매 진행중">
-        <div className="flex-1 min-h-0 grid grid-cols-[1fr_600px] gap-3 p-3 overflow-hidden">
-          <main className="min-w-0 h-full flex flex-col gap-3 overflow-hidden">
-            <section className="h-[238px] shrink-0 bg-[#101010] border border-[#333] rounded-lg px-7 py-4 overflow-hidden shadow-[inset_0_0_50px_rgba(255,255,255,0.025)]">
-              <div className="w-full h-full flex items-center justify-center">
-                <div className="flex items-center justify-center gap-8 max-w-[1180px] w-full">
-                  <div className="w-[170px] h-[190px] bg-[#181818] border border-[#444] rounded-md overflow-hidden shrink-0">
-                    {getLandmarkImage(currentLandmark) ? (
-                      <img
-                        src={getLandmarkImage(currentLandmark)!}
-                        alt={currentLandmark?.name || '랜드마크'}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : currentLandmark ? (
-                      <div className="w-full h-full flex items-center justify-center text-7xl font-black text-[#444]">
-                        {(currentLandmark.name || '')[0]}
-                      </div>
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[#555] font-bold">
-                        랜드마크 대기
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="min-w-0 w-[610px]">
-                    <div className="flex items-start gap-5 mb-6">
-                      <div className="min-w-0">
-                        <p className="mb-2 truncate text-[28px] font-black leading-none text-primary">
-                          {currentLandmark ? getLandmarkMapName(currentLandmark) : ''}
-                        </p>
-                        <h2 className="truncate text-[56px] font-black leading-none tracking-tight max-w-[380px]">
-                          {currentLandmark?.name || '랜드마크 선택 대기'}
-                        </h2>
-                      </div>
-
-                      <div className="w-[230px] bg-[#0b0b0b] border border-[#2b2b2b] rounded-md px-4 py-3 shrink-0">
-                        <p className="text-[#888] text-[18px] font-bold mb-1">경매 구분</p>
-                        <p className="text-[17px] font-black leading-snug text-white break-words line-clamp-2">
-                          랜드마크 경매
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-7">
-                      <InfoBlock label="현재 입찰" value={`${landmarkAuctionState.current_bid || 0}P`} white />
-                      <InfoBlock
-                        label="입찰 팀"
-                        value={currentLandmarkBidderTeam?.name || '없음'}
-                        valueClassName="text-red-400 text-[30px]"
-                      />
-                      <InfoBlock
-                        label="남은 랜드마크"
-                        value={`${availableLandmarks.length}개`}
-                        valueClassName="text-white text-[34px]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="w-[250px] border-l border-[#333] pl-7 flex items-center justify-center gap-6 shrink-0">
-                    <div className="text-center">
-                      <p className="text-[#888] text-[18px] font-bold mb-1">남은 시간</p>
-                      <p
-                        className={`text-[76px] font-black leading-none ${
-                          landmarkAuctionState.timer_remaining <= 5
-                            ? 'text-red-500 animate-pulse'
-                            : 'text-white'
-                        }`}
-                      >
-                        {landmarkAuctionState.timer_remaining || 0}
-                      </p>
-                      <p className="text-[#888] text-lg mt-1">초</p>
-                      <span
-                        className={`inline-block mt-2 px-4 py-1.5 rounded text-sm font-black ${
-                          landmarkAuctionState.status === 'running'
-                            ? 'bg-green-500/20 text-green-400'
-                            : landmarkAuctionState.status === 'paused'
-                            ? 'bg-yellow-500/20 text-yellow-400'
-                            : 'bg-[#333] text-[#888]'
-                        }`}
-                      >
-                        {landmarkAuctionState.status === 'running'
-                          ? '진행중'
-                          : landmarkAuctionState.status === 'paused'
-                          ? '정지'
-                          : '대기'}
-                      </span>
-                    </div>
-
-                    {nextLandmark && (
-                      <div className="w-[78px] text-center">
-                        <p className="text-[#888] text-[15px] font-bold mb-2">다음 랜마</p>
-                        <div className="w-[58px] h-[58px] mx-auto rounded overflow-hidden bg-[#1a1a1a] border border-[#333]">
-                          {getLandmarkImage(nextLandmark) ? (
-                            <img
-                              src={getLandmarkImage(nextLandmark)!}
-                              alt={nextLandmark.name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-xs text-[#777]">
-                              {(nextLandmark.name || '')[0]}
-                            </div>
-                          )}
-                        </div>
-                        <p className="mt-1 text-[10px] font-black truncate text-primary">
-                          {getLandmarkMapName(nextLandmark)}
-                        </p>
-                        <p className="text-[13px] font-black truncate">{nextLandmark.name}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className="h-[82px] shrink-0 bg-[#101010] border border-[#333] rounded-lg px-8 py-3 flex items-center justify-center overflow-hidden">
-              <p className="text-[24px] font-black text-center leading-[1.35] whitespace-pre-wrap break-words overflow-hidden max-w-[1240px]">
-                랜드마크 경매 진행중
-              </p>
-            </section>
-
-            <div className="flex-1 min-h-0 grid grid-cols-[0.68fr_1.32fr] gap-3 overflow-hidden">
-              <section className="min-h-0 flex flex-col gap-3 overflow-hidden">
-                <div className="h-[200px] shrink-0 bg-[#0c0c0c] border border-[#333] rounded-lg p-4 overflow-hidden">
-                  <h3 className="text-white text-[20px] font-black mb-3">경매 로그</h3>
-                  <div className="space-y-1.5 text-[16px] overflow-hidden pr-2">
-                    {landmarkLogs.filter((log) => ['bid', 'sold', 'passed'].includes(log.action)).length > 0 ? (
-                      landmarkLogs
-                        .filter((log) => ['bid', 'sold', 'passed'].includes(log.action))
-                        .slice(0, 8)
-                        .map((log) => (
-                          <p
-                            key={log.id}
-                            className={
-                              log.action === 'bid'
-                                ? 'text-yellow-400'
-                                : log.action === 'sold'
-                                ? 'text-green-400'
-                                : 'text-red-400'
-                            }
-                          >
-                            {log.message}
-                          </p>
-                        ))
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="flex-1 min-h-0 bg-[#0c0c0c] border border-[#333] rounded-lg p-4 overflow-hidden">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-white text-[22px] font-black">유찰 랜드마크</h3>
-                    <span className="text-[16px] text-white font-bold">
-                      {safeLandmarks.filter((landmark) => landmark.is_passed).length}개
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-5 gap-2 overflow-hidden content-start">
-                    {safeLandmarks
-                      .filter((landmark) => landmark.is_passed)
-                      .map((landmark) => (
-                        <LandmarkMiniCard
-                          key={landmark.id}
-                          landmark={landmark}
-                          isCurrent={landmark.id === currentLandmark?.id}
-                          isPassed
-                          isSold={false}
-                        />
-                      ))}
-                  </div>
-                </div>
-              </section>
-
-              <section className="min-h-0 flex flex-col gap-3 overflow-hidden">
-                <div className="flex-1 min-h-0 bg-[#0c0c0c] border border-[#333] rounded-lg p-4 overflow-hidden">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-white text-[22px] font-black">랜드마크 순서</h3>
-                    <span className="text-[17px] text-white font-bold">
-                      {safeLandmarks.filter((landmark) => landmark.team_id).length + 1} / {safeLandmarks.length}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-8 gap-2.5 overflow-hidden content-start">
-                    {orderedQueueLandmarks.map((landmark, index) => (
-                      <LandmarkMiniCard
-                        key={landmark.id}
-                        landmark={landmark}
-                        isCurrent={index === 0}
-                        isPassed={Boolean(landmark.is_passed)}
-                        isSold={Boolean(landmark.team_id)}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <SponsorBox title="SPONSOR" />
-              </section>
-            </div>
-          </main>
-
-          <aside className="h-full min-h-0 grid grid-cols-2 gap-2 overflow-hidden">
-            <div className="grid grid-rows-8 gap-2 min-h-0 overflow-hidden">
-              {leftTeams.map((team) => (
-                <LandmarkTeamCard
-                  key={team.id}
-                  team={team}
-                  landmarks={safeLandmarks.filter(
-                  (landmark) =>
-                    landmark.team_id === team.id ||
-                    landmark.teamId === team.id ||
-                    team.landmarks?.includes(landmark.id)
-                )}
-                  isCurrentBidder={team.id === landmarkAuctionState.current_bidder_team_id}
-                />
-              ))}
-            </div>
-
-            <div className="grid grid-rows-8 gap-2 min-h-0 overflow-hidden">
-              {rightTeams.map((team) => (
-                <LandmarkTeamCard
-                  key={team.id}
-                  team={team}
-                  landmarks={safeLandmarks.filter(
-                  (landmark) =>
-                    landmark.team_id === team.id ||
-                    landmark.teamId === team.id ||
-                    team.landmarks?.includes(landmark.id)
-                )}
-                  isCurrentBidder={team.id === landmarkAuctionState.current_bidder_team_id}
-                />
-              ))}
-            </div>
-          </aside>
-        </div>
-
-        <AuctionPopup popup={popup} />
-      </OverlayShell>
     )
   }
 
@@ -1298,12 +902,6 @@ export default function OverlayPage() {
                 key={team.id}
                 team={team}
                 players={safePlayers.filter((player) => player.team_id === team.id)}
-                landmarks={safeLandmarks.filter(
-                  (landmark) =>
-                    landmark.team_id === team.id ||
-                    landmark.teamId === team.id ||
-                    team.landmarks?.includes(landmark.id)
-                )}
                 isCurrentBidder={team.id === auctionState.current_bidder_team_id}
               />
             ))}
@@ -1315,12 +913,6 @@ export default function OverlayPage() {
                 key={team.id}
                 team={team}
                 players={safePlayers.filter((player) => player.team_id === team.id)}
-                landmarks={safeLandmarks.filter(
-                  (landmark) =>
-                    landmark.team_id === team.id ||
-                    landmark.teamId === team.id ||
-                    team.landmarks?.includes(landmark.id)
-                )}
                 isCurrentBidder={team.id === auctionState.current_bidder_team_id}
               />
             ))}
@@ -1340,16 +932,20 @@ function ResultsOverlay({
   settings,
   teams,
   players,
-  landmarks,
 }: {
   settings: LocalSettings
   teams: LocalTeam[]
   players: LocalPlayer[]
-  landmarks: LocalLandmark[]
 }) {
   const [page, setPage] = useState(1)
 
-  const sortedTeams = [...teams].sort((a, b) => getTeamNumber(a.id) - getTeamNumber(b.id))
+  const sortedTeams = [...teams].sort((a, b) => {
+    const pointDiff = (b.points || 0) - (a.points || 0)
+
+    if (pointDiff !== 0) return pointDiff
+
+    return getTeamNumber(a.id) - getTeamNumber(b.id)
+  })
   const teamsPerPage = 8
   const maxPage = Math.max(1, Math.ceil(sortedTeams.length / teamsPerPage))
   const pageTeams = sortedTeams.slice((page - 1) * teamsPerPage, page * teamsPerPage)
@@ -1399,13 +995,6 @@ function ResultsOverlay({
     }
   }, [maxPage])
 
-  const getTeamLandmarks = (team: LocalTeam) =>
-    landmarks.filter(
-      (landmark) =>
-        landmark.team_id === team.id ||
-        landmark.teamId === team.id ||
-        team.landmarks?.includes(landmark.id)
-    )
 
   const ResultPlayerSlot = ({
     player,
@@ -1478,7 +1067,7 @@ function ResultsOverlay({
     teamNumber: number
   }) => {
     const teamPlayers = getResultTeamPlayers(team, players).slice(0, 4)
-    const teamLandmarks = getTeamLandmarks(team)
+    const captainPlayer = teamPlayers.find((player) => getRawIsCaptain(player))
 
     return (
       <article className="relative min-h-0 overflow-hidden rounded-2xl border border-[#333] bg-[#101010]/95 p-4 shadow-[inset_0_0_26px_rgba(255,255,255,0.025)]">
@@ -1487,11 +1076,14 @@ function ResultsOverlay({
 
         <div className="relative z-10 flex h-full flex-col">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="shrink-0 text-[34px] font-black leading-none text-white">
-              {teamNumber}팀
+            <h3
+              className="min-w-0 shrink truncate text-[34px] font-black leading-none text-white"
+              title={captainPlayer?.name || `${teamNumber}팀`}
+            >
+              {captainPlayer?.name || `${teamNumber}팀`}
             </h3>
 
-            <span className="rounded-lg bg-primary px-4 py-2 text-[18px] font-black leading-none text-white shadow-[0_0_18px_rgba(239,68,68,0.35)]">
+            <span className="shrink-0 rounded-lg bg-primary px-4 py-2 text-[18px] font-black leading-none text-white shadow-[0_0_18px_rgba(239,68,68,0.35)]">
               {team.points ?? 0}P
             </span>
           </div>
@@ -1503,17 +1095,6 @@ function ResultsOverlay({
                 player={teamPlayers[slotIndex]}
               />
             ))}
-          </div>
-
-          <div className="mt-3 h-[42px] shrink-0 overflow-hidden rounded-lg border border-[#2d2d2d] bg-black/55 px-3 py-2">
-            <p className="truncate text-[20px] font-black leading-none text-white">
-              <span className="">[랜드마크]</span>{' '}
-              {teamLandmarks.length > 0
-                ? teamLandmarks
-                    .map((l: any) => `${getLandmarkMapName(l)} - ${l.name}`)
-                    .join(', ')
-                : '-'}
-            </p>
           </div>
         </div>
       </article>
@@ -1565,80 +1146,6 @@ function ResultsOverlay({
   )
 }
 
-
-
-function LandmarkMiniCard({
-  landmark,
-  isCurrent,
-  isPassed,
-  isSold,
-}: {
-  landmark: LocalLandmark
-  isCurrent: boolean
-  isPassed: boolean
-  isSold: boolean
-}) {
-  return (
-    <div
-      className={`
-        relative aspect-square min-h-[76px] overflow-hidden rounded-md border bg-[#111]
-        ${
-          isCurrent
-            ? 'border-yellow-400 ring-2 ring-yellow-400 shadow-[0_0_14px_rgba(250,204,21,0.65)]'
-            : isPassed
-            ? 'border-red-500/70'
-            : isSold
-            ? 'border-green-500/60'
-            : 'border-[#333]'
-        }
-        ${isPassed ? 'opacity-80' : ''}
-      `}
-    >
-      {getLandmarkImage(landmark) ? (
-        <img
-          src={getLandmarkImage(landmark)!}
-          alt={landmark.name}
-          className="absolute inset-0 h-full w-full object-cover opacity-65"
-        />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#181818] text-[26px] font-black text-[#777]">
-          {(landmark.name || '?')[0]}
-        </div>
-      )}
-
-      <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/20 to-black/90" />
-
-      <div className="absolute left-1 top-1 z-10 flex items-center gap-1">
-        {isPassed && (
-          <span className="rounded bg-red-500 px-1.5 py-0.5 text-[9px] font-black leading-none text-white">
-            유찰
-          </span>
-        )}
-
-        {isSold && !isPassed && (
-          <span className="rounded bg-green-500 px-1.5 py-0.5 text-[9px] font-black leading-none text-black">
-            낙찰
-          </span>
-        )}
-
-        {isCurrent && (
-          <span className="rounded bg-yellow-400 px-1.5 py-0.5 text-[9px] font-black leading-none text-black">
-            현재
-          </span>
-        )}
-      </div>
-
-      <div className="absolute inset-x-1 bottom-1 z-10 rounded bg-black/70 px-1 py-1">
-        <p className="w-full truncate text-center text-[10px] font-black leading-tight text-primary">
-          {getLandmarkMapName(landmark)}
-        </p>
-        <p className="mt-0.5 w-full truncate text-center text-[13px] font-black leading-tight text-white">
-          {landmark.name}
-        </p>
-      </div>
-    </div>
-  )
-}
 
 
 function SponsorBox({ title, compact = false }: { title: string; compact?: boolean }) {
@@ -1960,11 +1467,14 @@ function InfoBlock({
 interface TeamCardProps {
   team: LocalTeam
   players: LocalPlayer[]
-  landmarks: LocalLandmark[]
   isCurrentBidder: boolean
 }
 
-function TeamCard({ team, players, landmarks, isCurrentBidder }: TeamCardProps) {
+function TeamCard({ team, players, isCurrentBidder }: TeamCardProps) {
+  const captainPlayer = players.find(
+    (player) => player.team_id === team.id && player.is_captain
+  )
+
   return (
     <div
       className={`bg-[#101010] border rounded-lg p-2 min-h-0 overflow-hidden ${
@@ -1974,29 +1484,40 @@ function TeamCard({ team, players, landmarks, isCurrentBidder }: TeamCardProps) 
       }`}
     >
       <div className="flex items-center justify-between mb-2">
-        <span className="font-black text-[18px] truncate">{team.name}</span>
-        <span className="text-[18px] font-bold text-white">{team.points}P</span>
+        <span className="font-black text-[18px] truncate">
+          {captainPlayer?.name || team.name}
+        </span>
+
+        <span className="text-[18px] font-bold text-white">
+          {team.points}P
+        </span>
       </div>
 
       <div className="grid grid-cols-4 gap-1">
         {TIERS.map((tier) => {
-          const tierPlayer = players.find((player) => player.team_id === team.id && player.tier === tier)
+          const tierPlayer = players.find(
+            (player) =>
+              player.team_id === team.id &&
+              player.tier === tier
+          )
 
           return (
             <div
               key={tier}
               className={`aspect-square rounded border overflow-hidden bg-[#0a0a0a] ${
-                tierPlayer ? getTierBorderClass(tierPlayer.tier) : 'border-[#2a2a2a]'
+                tierPlayer
+                  ? getTierBorderClass(tierPlayer.tier)
+                  : 'border-[#2a2a2a]'
               }`}
             >
               {tierPlayer ? (
                 <div className="relative w-full h-full">
-
                   {tierPlayer?.is_captain && (
                     <div className="absolute left-1 top-1 z-10 rounded bg-yellow-400 px-1 text-[10px] font-black text-black">
                       팀장
                     </div>
                   )}
+
                   {tierPlayer.image_url ? (
                     <img
                       src={tierPlayer.image_url}
@@ -2016,91 +1537,27 @@ function TeamCard({ team, players, landmarks, isCurrentBidder }: TeamCardProps) 
                   </div>
 
                   <div className="absolute bottom-0 left-0 right-0 bg-black/80 px-1 py-0.5">
-                    <p className={`truncate text-center text-[11px] font-black ${getTierColorClass(tierPlayer.tier)}`}>
+                    <p
+                      className={`truncate text-center text-[11px] font-black ${getTierColorClass(
+                        tierPlayer.tier
+                      )}`}
+                    >
                       {tierPlayer.tier}
                     </p>
                   </div>
                 </div>
               ) : (
-                <div className={`flex w-full h-full items-center justify-center text-[18px] font-black ${getTierColorClass(tier)}`}>
+                <div
+                  className={`flex w-full h-full items-center justify-center text-[18px] font-black ${getTierColorClass(
+                    tier
+                  )}`}
+                >
                   {tier}
                 </div>
               )}
             </div>
           )
         })}
-      </div>
-
-      {landmarks.length > 0 && (
-        <div className="mt-1.5 space-y-1 overflow-hidden">
-          {landmarks.slice(0, 2).map((landmark) => (
-            <div
-              key={landmark.id}
-              className="flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[11px] font-black text-white"
-            >
-              <span className="shrink-0 text-yellow-300">랜드마크</span>
-              <span className="truncate">
-                {getLandmarkFullName(landmark)}
-              </span>
-            </div>
-          ))}
-
-          {landmarks.length > 2 && (
-            <div className="truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-black text-white">
-              +{landmarks.length - 2}개 더
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-interface LandmarkTeamCardProps {
-  team: LocalTeam
-  landmarks: LocalLandmark[]
-  isCurrentBidder: boolean
-}
-
-function LandmarkTeamCard({ team, landmarks, isCurrentBidder }: LandmarkTeamCardProps) {
-  return (
-    <div
-      className={`bg-[#101010] border rounded-lg p-2 min-h-0 overflow-hidden ${
-        isCurrentBidder
-          ? 'border-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.5)]'
-          : 'border-[#333]'
-      }`}
-    >
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-black text-[18px] truncate">{team.name}</span>
-        <span className="text-[18px] font-bold text-white">{team.points}P</span>
-      </div>
-
-      <div className="min-h-[52px] rounded border border-dashed border-[#333] bg-black/25 px-2 py-1.5">
-        {landmarks.length > 0 ? (
-          <div className="space-y-1">
-            {landmarks.slice(0, 3).map((landmark) => (
-              <div key={landmark.id} className="flex items-center justify-between gap-2">
-                <span className="truncate text-[16px] font-black text-white">
-                  {getLandmarkFullName(landmark)}
-                </span>
-                <span className="shrink-0 text-[14px] font-black text-yellow-300">
-                  {landmark.bid_amount || 0}P
-                </span>
-              </div>
-            ))}
-
-            {landmarks.length > 3 && (
-              <div className="truncate text-[12px] font-black text-[#aaa]">
-                +{landmarks.length - 3}개 더
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex h-[40px] items-center justify-center text-[12px] text-[#666]">
-            아직 낙찰 없음
-          </div>
-        )}
       </div>
     </div>
   )
