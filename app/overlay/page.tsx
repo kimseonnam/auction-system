@@ -381,6 +381,7 @@ export default function OverlayPage() {
   const bidSoundReadyRef = useRef(false)
   const bidSoundTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastCountdownSecondRef = useRef<number | null>(null)
+  const lastCountdownEndTimeRef = useRef<string | null>(null)
   const countdownSoundRef = useRef<HTMLAudioElement | null>(null)
 
   const playBidSound = createBidSoundPlayer(bidAudioContextRef)
@@ -625,15 +626,25 @@ export default function OverlayPage() {
 
   useEffect(() => {
     const timer = auctionState.timer_remaining
+    const currentEndTime = auctionState.auction_end_time || null
+
+    const stopCountdownSound = () => {
+      const sound = countdownSoundRef.current
+      if (!sound) return
+
+      sound.pause()
+      sound.currentTime = 0
+    }
+
+    if (lastCountdownEndTimeRef.current !== currentEndTime) {
+      lastCountdownEndTimeRef.current = currentEndTime
+      lastCountdownSecondRef.current = null
+      stopCountdownSound()
+    }
 
     if (auctionState.status !== 'running' || timer > 5 || timer <= 0) {
       lastCountdownSecondRef.current = null
-
-      if (countdownSoundRef.current) {
-        countdownSoundRef.current.pause()
-        countdownSoundRef.current.currentTime = 0
-      }
-
+      stopCountdownSound()
       return
     }
 
@@ -1179,15 +1190,15 @@ function PlayerMiniCard({
   return (
     <div
       className={`
-        relative aspect-square min-h-[76px] overflow-hidden rounded-md border bg-[#111]
+        relative aspect-square min-h-[76px] overflow-hidden rounded-md border-2 bg-[#111]
         ${
           isCurrent
-            ? `${getTierBorderClass(player.tier)} ring-2 ring-red-500 shadow-[0_0_14px_rgba(239,68,68,0.65)]`
+            ? `${getTierBorderClass(player.tier)} ring-2 ring-white/80 shadow-[0_0_18px_rgba(250,204,21,0.55)]`
             : isPassed
-            ? 'border-red-500/70'
+            ? 'border-red-500/80 shadow-[0_0_10px_rgba(239,68,68,0.35)]'
             : isSold
-            ? 'border-green-500/60'
-            : 'border-[#333]'
+            ? 'border-green-500/70 shadow-[0_0_10px_rgba(34,197,94,0.28)]'
+            : `${getTierBorderClass(player.tier)} shadow-[0_0_10px_rgba(255,255,255,0.08)]`
         }
         ${isPassed ? 'opacity-80' : ''}
       `}
