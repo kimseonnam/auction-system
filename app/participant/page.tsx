@@ -1006,6 +1006,7 @@ function TeamStatusCard({
 }) {
   const captain = players.find((player) => player.is_captain)
   const ownedPlayers = players.filter((player) => !player.is_captain)
+  const visibleTiers = ['B', 'C', 'D']
 
   return (
     <div
@@ -1018,11 +1019,11 @@ function TeamStatusCard({
       }`}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-base font-black text-white">
+        <div className="min-w-0 flex-1">
+          <p className="break-words text-sm font-black leading-tight text-white">
             {captain?.name || team.name}
           </p>
-          <p className="text-xs font-bold text-muted-foreground">
+          <p className="mt-1 text-[11px] font-bold leading-none text-muted-foreground">
             낙찰 {ownedPlayers.length}/3
           </p>
         </div>
@@ -1032,8 +1033,8 @@ function TeamStatusCard({
         </span>
       </div>
 
-      <div className="grid grid-cols-4 gap-1.5">
-        {['A', 'B', 'C', 'D'].map((tier) => {
+      <div className="grid grid-cols-3 gap-1.5">
+        {visibleTiers.map((tier) => {
           const tierPlayer = ownedPlayers.find((player) => player.tier === tier)
 
           return (
@@ -1047,15 +1048,13 @@ function TeamStatusCard({
               <p className={`text-sm font-black ${getTierColorClass(tier)}`}>
                 {tier}
               </p>
-              <p className="mt-1 truncate text-[11px] font-bold text-white">
+              <p className="mt-1 break-words text-[11px] font-bold leading-tight text-white">
                 {tierPlayer?.name || '-'}
               </p>
             </div>
           )
         })}
       </div>
-
-    
     </div>
   )
 }
