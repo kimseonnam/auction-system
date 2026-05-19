@@ -160,6 +160,18 @@ const getTeamPlayers = (team: LocalTeam, players: LocalPlayer[]) =>
     })
 
 export default function ParticipantPage() {
+
+useEffect(() => {
+  const role = sessionStorage.getItem('auction_role')
+  const adminAuth = sessionStorage.getItem('admin_authenticated')
+
+  if (window.top === window.self) {
+    if (role !== 'participant') {
+      window.location.replace('/')
+    }
+  }
+}, [])
+
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [players, setPlayers] = useState<LocalPlayer[]>([])
   const [playerState, setPlayerState] = useState<PlayerAuctionState>(DEFAULT_PLAYER_STATE)

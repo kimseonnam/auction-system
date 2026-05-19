@@ -18,8 +18,8 @@ import { supabase } from '@/lib/supabase/client'
 type AuctionRole = 'admin' | 'participant'
 type ViewMode = 'home' | 'admin' | 'participant'
 
-const ADMIN_CODE = 'ksn0724'
-const PARTICIPANT_CODE = 'm0724'
+const ADMIN_CODE = 'ksn724'
+const PARTICIPANT_CODE = 'mir0531'
 
 export default function HomePage() {
   const [code, setCode] = useState('')

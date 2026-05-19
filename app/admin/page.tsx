@@ -3,11 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Lock, ArrowLeft, Users, Play, Settings, LogOut } from 'lucide-react'
+import { ArrowLeft, Users, Play, Settings, LogOut } from 'lucide-react'
 import { supabase } from '@/lib/supabase/client'
-
-const ADMIN_CODE = '1234'
 
 type LocalTeam = {
   id: string
@@ -17,9 +14,17 @@ type LocalTeam = {
 }
 
 export default function AdminPage() {
-  const [adminCode, setAdminCode] = useState('')
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [error, setError] = useState('')
+  useEffect(() => {
+    const role = sessionStorage.getItem('auction_role')
+    const adminAuth = sessionStorage.getItem('admin_authenticated')
+
+    if (window.top === window.self) {
+      if (role !== 'admin' || adminAuth !== 'true') {
+        window.location.replace('/')
+      }
+    }
+  }, [])
+
   const [playerCount, setPlayerCount] = useState(0)
   const [teamCount, setTeamCount] = useState(0)
   const [teams, setTeams] = useState<LocalTeam[]>([])
@@ -87,20 +92,21 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    const storedAuth = sessionStorage.getItem('admin_authenticated')
-    const storedRole = sessionStorage.getItem('auction_role')
-
-    if (storedAuth === 'true' && storedRole === 'admin') {
-      setIsAuthenticated(true)
-    }
-
     refreshCounts()
     loadSettings()
 
     const channel = supabase
       .channel('admin-dashboard-counts')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, refreshCounts)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, refreshCounts)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'players' },
+        refreshCounts
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'teams' },
+        refreshCounts
+      )
       .subscribe()
 
     const interval = setInterval(() => {
@@ -113,78 +119,11 @@ export default function AdminPage() {
     }
   }, [refreshCounts])
 
-  const handleLogin = async () => {
-    if (adminCode.trim() === ADMIN_CODE) {
-      setIsAuthenticated(true)
-
-      sessionStorage.setItem('admin_authenticated', 'true')
-      sessionStorage.setItem('auction_role', 'admin')
-
-      setError('')
-      await refreshCounts()
-    } else {
-      setError('관리자 코드가 올바르지 않습니다.')
-    }
-  }
-
   const handleLogout = () => {
-    setIsAuthenticated(false)
     sessionStorage.removeItem('admin_authenticated')
     sessionStorage.removeItem('auction_role')
-    setAdminCode('')
-  }
 
-  if (!isAuthenticated) {
-    return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="w-full max-w-xl space-y-8 rounded-2xl border border-border bg-card/50 p-10 shadow-xl">
-          <div className="text-center space-y-4">
-            <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-5">
-              <Lock className="w-12 h-12 text-primary" />
-            </div>
-
-            <h1 className="text-4xl font-black">관리자 인증</h1>
-            <p className="text-muted-foreground text-lg">
-              관리자 코드를 입력하세요
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <Input
-              type="password"
-              value={adminCode}
-              onChange={(e) => setAdminCode(e.target.value)}
-              placeholder="관리자 코드"
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              className="bg-input border-border text-center text-xl h-16 font-bold"
-            />
-
-            {error && (
-              <p className="text-destructive text-sm text-center font-bold">
-                {error}
-              </p>
-            )}
-
-            <Button
-              onClick={handleLogin}
-              className="w-full h-16 text-xl font-black"
-              disabled={!adminCode.trim()}
-            >
-              로그인
-            </Button>
-          </div>
-
-          <div className="text-center">
-            <Link
-              href="/"
-              className="text-muted-foreground hover:text-foreground text-sm"
-            >
-              ← 메인으로 돌아가기
-            </Link>
-          </div>
-        </div>
-      </main>
-    )
+    window.location.replace('/')
   }
 
   return (
@@ -199,7 +138,9 @@ export default function AdminPage() {
             </Link>
 
             <div>
-              <h1 className="text-4xl font-black text-white">{tournamentName}</h1>
+              <h1 className="text-4xl font-black text-white">
+                {tournamentName}
+              </h1>
               <p className="text-muted-foreground text-base mt-1">
                 관리자 대시보드
               </p>
