@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase/client'
 
 type AuctionRole = 'admin' | 'participant'
-type ViewMode = 'home' | 'admin' | 'participant'
+type ViewMode = 'home' | 'admin' | 'participant' | 'players'
 
 const ADMIN_CODE = 'ksn724'
 const PARTICIPANT_CODE = 'mir0531'
@@ -166,6 +166,17 @@ export default function HomePage() {
       </main>
     )
   }
+  
+  if (viewMode === 'players') {
+  return (
+    <main className="w-screen h-screen bg-black">
+      <iframe
+        src="/players"
+        className="w-full h-full border-0"
+      />
+    </main>
+  )
+}  
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-10">
@@ -256,7 +267,10 @@ export default function HomePage() {
             </button>
           )}
 
-          <Link href="/players" className="group">
+          <button
+            onClick={() => setViewMode('players')}
+            className="group text-left"
+          >
             <div className="h-full min-h-[220px] rounded-2xl border border-border bg-card p-10 transition-all duration-200 hover:border-primary hover:shadow-xl hover:shadow-primary/20">
               <div className="mb-6 flex items-center gap-5">
                 <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
@@ -272,7 +286,7 @@ export default function HomePage() {
                 등록된 플레이어 목록과 티어를 확인하세요
               </p>
             </div>
-          </Link>
+          </button>
 
           {role === 'admin' && (
             <Link

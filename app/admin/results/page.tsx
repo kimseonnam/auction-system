@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, ChevronLeft, ChevronRight, Monitor } from 'lucide-react'
@@ -201,16 +201,32 @@ export default function ResultsPage() {
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [players, setPlayers] = useState<LocalPlayer[]>([])
   const [page, setPage] = useState(1)
+  const lastLocalDataKeyRef = useRef('')
 
   useEffect(() => {
     const load = () => {
-      const snapshot = safeJsonParse<AuctionSnapshot>(localStorage.getItem('auction_snapshot'), {})
+      const snapshotRaw = localStorage.getItem('auction_snapshot')
+      const savedTeamsRaw = localStorage.getItem('auction_teams')
+      const auctionPlayersRaw = localStorage.getItem('auction_players')
+      const registeredPlayersRaw = localStorage.getItem('players')
 
-      const savedTeams = safeJsonParse<LocalTeam[]>(localStorage.getItem('auction_teams'), [])
+      const localDataKey = [
+        snapshotRaw || '',
+        savedTeamsRaw || '',
+        auctionPlayersRaw || '',
+        registeredPlayersRaw || '',
+      ].join('|')
+
+      // 같은 데이터면 state를 다시 바꾸지 않아서 결과창 리렌더링을 줄입니다.
+      if (lastLocalDataKeyRef.current === localDataKey) return
+      lastLocalDataKeyRef.current = localDataKey
+
+      const snapshot = safeJsonParse<AuctionSnapshot>(snapshotRaw, {})
+      const savedTeams = safeJsonParse<LocalTeam[]>(savedTeamsRaw, [])
       const snapshotTeams = Array.isArray(snapshot.teams) ? snapshot.teams : []
 
-      const auctionPlayers = safeJsonParse<LocalPlayer[]>(localStorage.getItem('auction_players'), [])
-      const registeredPlayers = safeJsonParse<LocalPlayer[]>(localStorage.getItem('players'), [])
+      const auctionPlayers = safeJsonParse<LocalPlayer[]>(auctionPlayersRaw, [])
+      const registeredPlayers = safeJsonParse<LocalPlayer[]>(registeredPlayersRaw, [])
       const snapshotPlayers = Array.isArray(snapshot.players) ? snapshot.players : []
       const snapshotAuctionPlayers = Array.isArray(snapshot.auction_players)
         ? snapshot.auction_players
@@ -222,12 +238,17 @@ export default function ResultsPage() {
 
     load()
 
-    const interval = setInterval(load, 700)
+    // 다른 탭/창에서 localStorage가 바뀌면 즉시 갱신합니다.
     window.addEventListener('storage', load)
+    window.addEventListener('focus', load)
+
+    // 같은 창에서 storage 이벤트가 안 잡히는 경우를 위한 가벼운 보조 동기화입니다.
+    const interval = setInterval(load, 2500)
 
     return () => {
       clearInterval(interval)
       window.removeEventListener('storage', load)
+      window.removeEventListener('focus', load)
     }
   }, [])
 

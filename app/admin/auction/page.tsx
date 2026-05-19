@@ -310,6 +310,140 @@ export default function AuctionPage() {
     saveLocalOverlaySnapshot(loadedPlayers, loadedTeams, loadedState, loadedLogs)
   }, [saveLocalOverlaySnapshot])
 
+
+  const isConnectionOnlyTeamUpdate = (payload: any) => {
+    if (payload?.eventType !== 'UPDATE') return false
+
+    const oldTeam = payload.old || {}
+    const newTeam = payload.new || {}
+    const ignoredKeys = new Set(['is_connected', 'connected_at', 'connected_session_id'])
+    const keys = new Set([...Object.keys(oldTeam), ...Object.keys(newTeam)])
+
+    for (const key of keys) {
+      if (ignoredKeys.has(key)) continue
+      if (oldTeam[key] !== newTeam[key]) return false
+    }
+
+    return true
+  }
+
+  const handlePlayersRealtime = useCallback(
+    (payload: any) => {
+      const eventType = payload?.eventType
+      const newPlayer = payload?.new as LocalPlayer | null
+      const oldPlayer = payload?.old as Partial<LocalPlayer> | null
+
+      let nextPlayers = playersRef.current
+
+      if (eventType === 'DELETE') {
+        const deletedId = oldPlayer?.id
+        if (!deletedId) return
+        nextPlayers = playersRef.current.filter((player) => player.id !== deletedId)
+      } else if (newPlayer?.id) {
+        const exists = playersRef.current.some((player) => player.id === newPlayer.id)
+        nextPlayers = exists
+          ? playersRef.current.map((player) =>
+              player.id === newPlayer.id ? { ...player, ...newPlayer } : player
+            )
+          : [...playersRef.current, newPlayer]
+
+        nextPlayers = [...nextPlayers].sort((a, b) => {
+          const aOrder = a.auction_order ?? 999999
+          const bOrder = b.auction_order ?? 999999
+          if (aOrder !== bOrder) return aOrder - bOrder
+          return a.id.localeCompare(b.id)
+        })
+      } else {
+        return
+      }
+
+      const nextTeams = syncCaptainTeamNames(nextPlayers, teamsRef.current)
+
+      playersRef.current = nextPlayers
+      teamsRef.current = nextTeams
+
+      setPlayers(nextPlayers)
+      setTeams(nextTeams)
+      saveLocalOverlaySnapshot(nextPlayers, nextTeams, auctionStateRef.current, logsRef.current)
+    },
+    [saveLocalOverlaySnapshot]
+  )
+
+  const handleTeamsRealtime = useCallback(
+    (payload: any) => {
+      if (isConnectionOnlyTeamUpdate(payload)) return
+
+      const eventType = payload?.eventType
+      const newTeam = payload?.new as LocalTeam | null
+      const oldTeam = payload?.old as Partial<LocalTeam> | null
+
+      let rawTeams = teamsRef.current
+
+      if (eventType === 'DELETE') {
+        const deletedId = oldTeam?.id
+        if (!deletedId) return
+        rawTeams = teamsRef.current.filter((team) => team.id !== deletedId)
+      } else if (newTeam?.id) {
+        const exists = teamsRef.current.some((team) => team.id === newTeam.id)
+        rawTeams = exists
+          ? teamsRef.current.map((team) =>
+              team.id === newTeam.id ? { ...team, ...newTeam } : team
+            )
+          : [...teamsRef.current, newTeam]
+      } else {
+        return
+      }
+
+      const nextTeams = syncCaptainTeamNames(playersRef.current, rawTeams)
+
+      teamsRef.current = nextTeams
+      setTeams(nextTeams)
+      saveLocalOverlaySnapshot(playersRef.current, nextTeams, auctionStateRef.current, logsRef.current)
+    },
+    [saveLocalOverlaySnapshot]
+  )
+
+  const handleAuctionStateRealtime = useCallback(
+    (payload: any) => {
+      const nextState = payload?.new
+        ? normalizeAuctionState(payload.new)
+        : defaultAuctionState
+
+      auctionStateRef.current = nextState
+      setAuctionState(nextState)
+      saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, nextState, logsRef.current)
+    },
+    [saveLocalOverlaySnapshot]
+  )
+
+  const handleLogsRealtime = useCallback(
+    (payload: any) => {
+      const eventType = payload?.eventType
+      const nextLog = payload?.new as LocalAuctionLog | null
+      const oldLog = payload?.old as Partial<LocalAuctionLog> | null
+
+      let nextLogs = logsRef.current
+
+      if (eventType === 'DELETE') {
+        const deletedId = oldLog?.id
+        if (!deletedId) return
+        nextLogs = logsRef.current.filter((log) => log.id !== deletedId)
+      } else if (nextLog?.id && ['bid', 'sold', 'passed'].includes(nextLog.action)) {
+        const withoutDuplicate = logsRef.current.filter((log) => log.id !== nextLog.id)
+        nextLogs = nextLog.action === 'bid'
+          ? [nextLog, ...withoutDuplicate].slice(0, 30)
+          : [nextLog]
+      } else {
+        return
+      }
+
+      logsRef.current = nextLogs
+      setLogs(nextLogs)
+      saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, auctionStateRef.current, nextLogs)
+    },
+    [saveLocalOverlaySnapshot]
+  )
+
   useEffect(() => {
     localStorage.setItem('auction_mode', 'player')
 
@@ -325,10 +459,10 @@ export default function AuctionPage() {
 
     const channel = supabase
       .channel('auction-page-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, loadAuctionData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadAuctionData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, loadAuctionData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadAuctionData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, handlePlayersRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, handleTeamsRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, handleAuctionStateRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, handleLogsRealtime)
       .subscribe()
 
 
@@ -339,12 +473,12 @@ return () => {
     clearInterval(timerRef.current)
   }
 }
-  }, [loadAuctionData])
+  }, [loadAuctionData, handlePlayersRealtime, handleTeamsRealtime, handleAuctionStateRealtime, handleLogsRealtime])
 
   const savePlayers = async (nextPlayers: LocalPlayer[]) => {
     playersRef.current = nextPlayers
     setPlayers(nextPlayers)
-    saveLocalOverlaySnapshot(nextPlayers, teams, auctionState, logs)
+    saveLocalOverlaySnapshot(nextPlayers, teamsRef.current, auctionStateRef.current, logsRef.current)
 
     const { error } = await supabase.from('players').upsert(nextPlayers)
     if (error) console.error('players save error:', error)
@@ -354,7 +488,7 @@ return () => {
     const syncedTeams = syncCaptainTeamNames(playersRef.current, nextTeams)
     teamsRef.current = syncedTeams
     setTeams(syncedTeams)
-    saveLocalOverlaySnapshot(players, syncedTeams, auctionState, logs)
+    saveLocalOverlaySnapshot(playersRef.current, syncedTeams, auctionStateRef.current, logsRef.current)
 
     const { error } = await supabase.from('teams').upsert(syncedTeams)
     if (error) console.error('teams save error:', error)
@@ -389,7 +523,7 @@ return () => {
 
   const clearAuctionLogs = async () => {
     setLogs([])
-    saveLocalOverlaySnapshot(players, teams, auctionState, [])
+    saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, auctionStateRef.current, [])
 
     const { error } = await supabase
       .from('auction_logs')
@@ -412,7 +546,7 @@ return () => {
     const nextLogs = action === 'bid' ? [newLog, ...logsRef.current].slice(0, 30) : [newLog]
     logsRef.current = nextLogs
     setLogs(nextLogs)
-    saveLocalOverlaySnapshot(players, teams, auctionState, nextLogs)
+    saveLocalOverlaySnapshot(playersRef.current, teamsRef.current, auctionStateRef.current, nextLogs)
 
     if (action !== 'bid') {
       await supabase.from('auction_logs').delete().in('action', ['bid', 'sold', 'passed'])

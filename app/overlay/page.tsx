@@ -275,6 +275,44 @@ const chunkArray = <T,>(items: T[], size: number): T[][] => {
 const normalizeTeams = (teams: LocalTeam[]) =>
   Array.isArray(teams) ? teams : []
 
+const sortTeamsByNumber = (teams: LocalTeam[]) =>
+  [...teams].sort((a, b) => getTeamNumber(a.id) - getTeamNumber(b.id))
+
+const normalizeAuctionStateFromRow = (row: any): LocalAuctionState => {
+  if (!row) return DEFAULT_AUCTION_STATE
+
+  const status =
+    row.status === 'running' || row.status === 'paused' || row.status === 'ready'
+      ? row.status
+      : 'ready'
+
+  return {
+    current_player_id: row.current_player_id ?? null,
+    current_bid: Number(row.current_bid ?? 0),
+    current_bidder_team_id: row.current_bidder_team_id ?? null,
+    auction_end_time: row.auction_end_time ?? null,
+    timer_remaining: getRemainSeconds(
+      row.auction_end_time ?? null,
+      status,
+      DEFAULT_AUCTION_STATE.timer_remaining
+    ),
+    status,
+    overlay_mode: normalizeAuctionMode(row.overlay_mode),
+  }
+}
+
+const isMeaningfulTeamChange = (prevTeam: LocalTeam | undefined, nextTeam: LocalTeam) => {
+  if (!prevTeam) return true
+
+  return (
+    prevTeam.name !== nextTeam.name ||
+    Number(prevTeam.points ?? 0) !== Number(nextTeam.points ?? 0) ||
+    JSON.stringify(prevTeam.players || []) !== JSON.stringify(nextTeam.players || []) ||
+    JSON.stringify(prevTeam.player_ids || []) !== JSON.stringify(nextTeam.player_ids || [])
+  )
+}
+
+
 const playPopupSound = (type: 'sold' | 'passed') => {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
@@ -440,26 +478,8 @@ export default function OverlayPage() {
     const loadedPlayers = mergePlayers(((playersResult.data || []) as LocalPlayer[]).map(normalizePlayer))
     const loadedTeams = normalizeTeams((teamsResult.data || []) as LocalTeam[])
     const loadedAuctionState = auctionStateResult.data
-      ? {
-          current_player_id: auctionStateResult.data.current_player_id ?? null,
-          current_bid: Number(auctionStateResult.data.current_bid ?? 0),
-          current_bidder_team_id: auctionStateResult.data.current_bidder_team_id ?? null,
-          auction_end_time: auctionStateResult.data.auction_end_time ?? null,
-          timer_remaining: getRemainSeconds(
-            auctionStateResult.data.auction_end_time ?? null,
-            auctionStateResult.data.status,
-            DEFAULT_AUCTION_STATE.timer_remaining
-          ),
-          status:
-            auctionStateResult.data.status === 'running' ||
-            auctionStateResult.data.status === 'paused' ||
-            auctionStateResult.data.status === 'ready'
-              ? auctionStateResult.data.status
-              : 'ready',
-          overlay_mode: normalizeAuctionMode((auctionStateResult.data as any).overlay_mode),
-        }
+      ? normalizeAuctionStateFromRow(auctionStateResult.data)
       : DEFAULT_AUCTION_STATE
-
 
     setTeams(loadedTeams)
     setPlayers(loadedPlayers)
@@ -470,7 +490,107 @@ export default function OverlayPage() {
     if (dbOverlayMode) {
       setAuctionMode(dbOverlayMode)
     }
+  }
 
+  const applyPlayerRealtimePayload = (payload: any) => {
+    const eventType = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE'
+    const newPlayer = payload.new?.id ? normalizePlayer(payload.new as LocalPlayer) : null
+    const oldPlayer = payload.old?.id ? (payload.old as LocalPlayer) : null
+
+    if (eventType === 'DELETE' && oldPlayer?.id) {
+      setPlayers((prev) => prev.filter((player) => player.id !== oldPlayer.id))
+      return
+    }
+
+    if (!newPlayer?.id) return
+
+    setPlayers((prev) => {
+      const exists = prev.some((player) => player.id === newPlayer.id)
+      const nextPlayers = exists
+        ? prev.map((player) =>
+            player.id === newPlayer.id
+              ? normalizePlayer({
+                  ...player,
+                  ...newPlayer,
+                  image_url: getPlayerImageUrl(newPlayer) || getPlayerImageUrl(player),
+                })
+              : player
+          )
+        : [...prev, newPlayer]
+
+      return [...nextPlayers].sort((a, b) => {
+        const aOrder = a.auction_order ?? 999999
+        const bOrder = b.auction_order ?? 999999
+
+        if (aOrder !== bOrder) return aOrder - bOrder
+        return String(a.id).localeCompare(String(b.id))
+      })
+    })
+  }
+
+  const applyTeamRealtimePayload = (payload: any) => {
+    const eventType = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE'
+    const newTeam = payload.new?.id ? (payload.new as LocalTeam) : null
+    const oldTeam = payload.old?.id ? (payload.old as LocalTeam) : null
+
+    if (eventType === 'DELETE' && oldTeam?.id) {
+      setTeams((prev) => prev.filter((team) => team.id !== oldTeam.id))
+      return
+    }
+
+    if (!newTeam?.id) return
+
+    setTeams((prev) => {
+      const existingTeam = prev.find((team) => team.id === newTeam.id)
+
+      // 참가자 접속 체크용 heartbeat(is_connected, connected_at 등)만 바뀐 경우에는
+      // 오버레이 화면에 필요한 값이 아니므로 리렌더링하지 않습니다.
+      if (!isMeaningfulTeamChange(existingTeam, newTeam)) {
+        return prev
+      }
+
+      const nextTeams = existingTeam
+        ? prev.map((team) => (team.id === newTeam.id ? { ...team, ...newTeam } : team))
+        : [...prev, newTeam]
+
+      return sortTeamsByNumber(nextTeams)
+    })
+  }
+
+  const applyAuctionStateRealtimePayload = (payload: any) => {
+    const nextState = normalizeAuctionStateFromRow(payload.new)
+
+    setAuctionState(nextState)
+
+    const dbOverlayMode = normalizeAuctionMode(payload.new?.overlay_mode)
+    if (dbOverlayMode) {
+      setAuctionMode(dbOverlayMode)
+    }
+  }
+
+  const applyAuctionLogRealtimePayload = (payload: any) => {
+    const eventType = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE'
+    const newLog = payload.new as LocalAuctionLog | undefined
+    const oldLog = payload.old as LocalAuctionLog | undefined
+
+    if (eventType === 'DELETE' && oldLog?.id) {
+      setLogs((prev) => prev.filter((log) => log.id !== oldLog.id))
+      return
+    }
+
+    if (!newLog?.id || !['bid', 'sold', 'passed'].includes(newLog.action)) return
+
+    setLogs((prev) => {
+      const withoutDuplicate = prev.filter((log) => log.id !== newLog.id)
+      const nextLogs =
+        eventType === 'UPDATE'
+          ? [...withoutDuplicate, newLog]
+          : [newLog, ...withoutDuplicate]
+
+      return nextLogs
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 30)
+    })
   }
 
   useEffect(() => {
@@ -481,10 +601,10 @@ export default function OverlayPage() {
 
     const channel = supabase
       .channel('overlay-auction-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, loadOverlayData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadOverlayData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, loadOverlayData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadOverlayData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, applyPlayerRealtimePayload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, applyTeamRealtimePayload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, applyAuctionStateRealtimePayload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, applyAuctionLogRealtimePayload)
       .subscribe()
 
     return () => {
@@ -496,6 +616,7 @@ export default function OverlayPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
 
   useEffect(() => {
     const latest = logs[0]

@@ -1,7 +1,7 @@
 const { app, BrowserWindow, shell, globalShortcut } = require("electron");
 const path = require("path");
 
-const APP_URL = "https://auction-system-chi.vercel.app";
+const APP_URL = "https://kimseonnam.online";
 const DEV_URL = "http://localhost:3000";
 const isDev = !app.isPackaged;
 

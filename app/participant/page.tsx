@@ -106,6 +106,41 @@ const normalizeMode = (value: unknown): AuctionMode => {
   return 'player'
 }
 
+const normalizePlayerState = (value: any): PlayerAuctionState => {
+  if (!value) return DEFAULT_PLAYER_STATE
+
+  const status =
+    value.status === 'running' || value.status === 'paused' || value.status === 'ready'
+      ? value.status
+      : 'ready'
+
+  return {
+    current_player_id: value.current_player_id ?? null,
+    current_bid: Number(value.current_bid ?? 0),
+    current_bidder_team_id: value.current_bidder_team_id ?? null,
+    auction_end_time: value.auction_end_time ?? null,
+    timer_remaining: getRemainSeconds(
+      value.auction_end_time ?? null,
+      status,
+      DEFAULT_PLAYER_STATE.timer_remaining
+    ),
+    status,
+    overlay_mode: normalizeMode(value.overlay_mode),
+  }
+}
+
+const isMeaningfulTeamChange = (oldTeam: any, newTeam: any) => {
+  if (!newTeam) return false
+  if (!oldTeam) return true
+
+  return (
+    oldTeam.name !== newTeam.name ||
+    Number(oldTeam.points ?? 0) !== Number(newTeam.points ?? 0) ||
+    (oldTeam.join_code ?? null) !== (newTeam.join_code ?? null)
+  )
+}
+
+
 const getTeamNumber = (teamId?: string | null) => {
   if (!teamId) return 9999
   const match = teamId.match(/team-(\d+)/)
@@ -217,26 +252,7 @@ useEffect(() => {
       (a, b) => getTeamNumber(a.id) - getTeamNumber(b.id)
     )
 
-    const nextPlayerState = playerStateResult.data
-      ? {
-          current_player_id: playerStateResult.data.current_player_id ?? null,
-          current_bid: Number(playerStateResult.data.current_bid ?? 0),
-          current_bidder_team_id: playerStateResult.data.current_bidder_team_id ?? null,
-          auction_end_time: playerStateResult.data.auction_end_time ?? null,
-          timer_remaining: getRemainSeconds(
-            playerStateResult.data.auction_end_time ?? null,
-            playerStateResult.data.status,
-            DEFAULT_PLAYER_STATE.timer_remaining
-          ),
-          status:
-            playerStateResult.data.status === 'running' ||
-            playerStateResult.data.status === 'paused' ||
-            playerStateResult.data.status === 'ready'
-              ? playerStateResult.data.status
-              : 'ready',
-          overlay_mode: normalizeMode((playerStateResult.data as any).overlay_mode),
-        }
-      : DEFAULT_PLAYER_STATE
+    const nextPlayerState = normalizePlayerState(playerStateResult.data)
 
     setTeams(nextTeams)
     setPlayers((playersResult.data || []) as LocalPlayer[])
@@ -262,10 +278,120 @@ useEffect(() => {
 
     const channel = supabase
       .channel('participant-page-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_state' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'auction_logs' }, loadData)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'auction_state' },
+        (payload) => {
+          const nextState = normalizePlayerState(payload.new)
+          setPlayerState(nextState)
+          setMode(normalizeMode(nextState.overlay_mode))
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'auction_logs' },
+        (payload) => {
+          const eventType = payload.eventType
+
+          if (eventType === 'INSERT') {
+            const newLog = payload.new as AuctionLog
+            if (!['bid', 'sold', 'passed'].includes(newLog.action)) return
+
+            setLogs((prev) => {
+              if (prev.some((log) => log.id === newLog.id)) return prev
+              return [newLog, ...prev].slice(0, 20)
+            })
+            return
+          }
+
+          if (eventType === 'DELETE') {
+            const oldLog = payload.old as Partial<AuctionLog>
+            if (!oldLog.id) return
+
+            setLogs((prev) => prev.filter((log) => log.id !== oldLog.id))
+            return
+          }
+
+          if (eventType === 'UPDATE') {
+            const updatedLog = payload.new as AuctionLog
+            setLogs((prev) =>
+              prev.map((log) => (log.id === updatedLog.id ? updatedLog : log))
+            )
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'players' },
+        (payload) => {
+          const eventType = payload.eventType
+
+          if (eventType === 'INSERT') {
+            const newPlayer = payload.new as LocalPlayer
+            setPlayers((prev) => {
+              if (prev.some((player) => player.id === newPlayer.id)) return prev
+              return [...prev, newPlayer].sort((a, b) => {
+                const orderDiff = Number(a.auction_order ?? 9999) - Number(b.auction_order ?? 9999)
+                return orderDiff !== 0 ? orderDiff : a.id.localeCompare(b.id)
+              })
+            })
+            return
+          }
+
+          if (eventType === 'DELETE') {
+            const oldPlayer = payload.old as Partial<LocalPlayer>
+            if (!oldPlayer.id) return
+
+            setPlayers((prev) => prev.filter((player) => player.id !== oldPlayer.id))
+            return
+          }
+
+          if (eventType === 'UPDATE') {
+            const updatedPlayer = payload.new as LocalPlayer
+            setPlayers((prev) =>
+              prev.map((player) => (player.id === updatedPlayer.id ? updatedPlayer : player))
+            )
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'teams' },
+        (payload) => {
+          const eventType = payload.eventType
+
+          if (eventType === 'INSERT') {
+            const newTeam = payload.new as LocalTeam
+            setTeams((prev) => {
+              if (prev.some((team) => team.id === newTeam.id)) return prev
+              return [...prev, newTeam].sort((a, b) => getTeamNumber(a.id) - getTeamNumber(b.id))
+            })
+            return
+          }
+
+          if (eventType === 'DELETE') {
+            const oldTeam = payload.old as Partial<LocalTeam>
+            if (!oldTeam.id) return
+
+            setTeams((prev) => prev.filter((team) => team.id !== oldTeam.id))
+            return
+          }
+
+          if (eventType === 'UPDATE') {
+            const oldTeam = payload.old as LocalTeam
+            const updatedTeam = payload.new as LocalTeam
+
+            // 참가자 접속 heartbeat는 is_connected/connected_at/session만 바뀌므로 화면 전체 갱신에서 제외합니다.
+            if (!isMeaningfulTeamChange(oldTeam, updatedTeam)) return
+
+            setTeams((prev) =>
+              prev
+                .map((team) => (team.id === updatedTeam.id ? updatedTeam : team))
+                .sort((a, b) => getTeamNumber(a.id) - getTeamNumber(b.id))
+            )
+          }
+        }
+      )
       .subscribe()
 
     return () => {
@@ -542,8 +668,15 @@ useEffect(() => {
         })
       }
 
+      setPlayerState((prev) => ({
+        ...prev,
+        current_bid: amount,
+        current_bidder_team_id: joinedTeam.id,
+        auction_end_time: new Date(Date.now() + 20000).toISOString(),
+        timer_remaining: 20,
+        status: 'running',
+      }))
       setBidInput('')
-      await loadData()
     } finally {
       setIsBidding(false)
     }

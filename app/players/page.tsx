@@ -148,8 +148,18 @@ export default function PlayersPage() {
                 </div>
               </div>
 
-              <div className="p-2">
-                <p className="font-semibold truncate">{player.name}</p>
+              <div className="p-2 space-y-1">
+                <p className="font-semibold truncate">
+                  {player.name}
+                </p>
+
+                <p className="text-xs text-muted-foreground">
+                  연습 기간 : {player.available_days || '-'}
+                </p>
+
+                <p className="text-xs text-muted-foreground">
+                  치지직 티어 : {player.detail_tier || '-'}
+                </p>
               </div>
             </div>
           ))}
