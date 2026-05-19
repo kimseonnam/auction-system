@@ -2,12 +2,21 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Users, Settings, Monitor, Gavel, Lock, LogOut } from 'lucide-react'
+import {
+  Users,
+  Settings,
+  Monitor,
+  Gavel,
+  Lock,
+  LogOut,
+} from 'lucide-react'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase/client'
 
 type AuctionRole = 'admin' | 'participant'
+type ViewMode = 'home' | 'admin' | 'participant'
 
 const ADMIN_CODE = 'ksn0724'
 const PARTICIPANT_CODE = 'm0724'
@@ -17,9 +26,12 @@ export default function HomePage() {
   const [role, setRole] = useState<AuctionRole | null>(null)
   const [error, setError] = useState('')
   const [title, setTitle] = useState('경매 시스템')
+  const [viewMode, setViewMode] = useState<ViewMode>('home')
 
   useEffect(() => {
-    const savedRole = sessionStorage.getItem('auction_role') as AuctionRole | null
+    const savedRole = sessionStorage.getItem(
+      'auction_role'
+    ) as AuctionRole | null
 
     if (savedRole === 'admin' || savedRole === 'participant') {
       setRole(savedRole)
@@ -50,6 +62,7 @@ export default function HomePage() {
     if (trimmedCode === ADMIN_CODE) {
       sessionStorage.setItem('auction_role', 'admin')
       sessionStorage.setItem('admin_authenticated', 'true')
+
       setRole('admin')
       setError('')
       setCode('')
@@ -59,6 +72,7 @@ export default function HomePage() {
     if (trimmedCode === PARTICIPANT_CODE) {
       sessionStorage.setItem('auction_role', 'participant')
       sessionStorage.removeItem('admin_authenticated')
+
       setRole('participant')
       setError('')
       setCode('')
@@ -71,7 +85,9 @@ export default function HomePage() {
   const handleLogout = () => {
     sessionStorage.removeItem('auction_role')
     sessionStorage.removeItem('admin_authenticated')
+
     setRole(null)
+    setViewMode('home')
     setCode('')
     setError('')
   }
@@ -127,11 +143,39 @@ export default function HomePage() {
     )
   }
 
+  if (viewMode === 'admin') {
+    return (
+      <main className="w-screen h-screen bg-black">
+        <iframe
+          src="/admin"
+          className="w-full h-full border-0"
+        />
+      </main>
+    )
+  }
+
+  if (viewMode === 'participant') {
+    return (
+      <main className="w-screen h-screen bg-black">
+        
+
+        <iframe
+          src="/participant"
+          className="w-full h-full border-0"
+        />
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-10">
       <div className="w-full max-w-6xl space-y-12">
         <div className="flex items-center justify-end">
-          <Button variant="outline" onClick={handleLogout} className="font-bold">
+          <Button
+            variant="outline"
+            onClick={handleLogout}
+            className="font-bold"
+          >
             <LogOut className="mr-2 h-4 w-4" />
             로그아웃
           </Button>
@@ -145,7 +189,9 @@ export default function HomePage() {
                 : 'bg-red-600 text-white shadow-[0_0_15px_rgba(255,0,0,0.4)]'
             }`}
           >
-            {role === 'admin' ? '관리자 모드' : '경매 참가자 모드'}
+            {role === 'admin'
+              ? '관리자 모드'
+              : '경매 참가자 모드'}
           </div>
 
           <h1 className="text-6xl font-black tracking-tight">
@@ -161,41 +207,53 @@ export default function HomePage() {
 
         <div
           className={`grid grid-cols-1 gap-10 mt-16 ${
-            role === 'admin' ? 'md:grid-cols-3' : 'md:grid-cols-2'
+            role === 'admin'
+              ? 'md:grid-cols-3'
+              : 'md:grid-cols-2'
           }`}
         >
           {role === 'admin' ? (
-            <Link href="/admin" className="group">
+            <button
+              onClick={() => setViewMode('admin')}
+              className="group text-left"
+            >
               <div className="h-full min-h-[220px] rounded-2xl border border-border bg-card p-10 transition-all duration-200 hover:border-primary hover:shadow-xl hover:shadow-primary/20">
                 <div className="mb-6 flex items-center gap-5">
                   <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
                     <Settings className="h-9 w-9 text-primary" />
                   </div>
 
-                  <h2 className="text-2xl font-black">관리자</h2>
+                  <h2 className="text-2xl font-black">
+                    관리자
+                  </h2>
                 </div>
 
                 <p className="text-lg text-muted-foreground">
                   플레이어 등록, 팀 설정, 대회 설정을 관리하세요
                 </p>
               </div>
-            </Link>
+            </button>
           ) : (
-            <Link href="/participant" className="group">
+            <button
+              onClick={() => setViewMode('participant')}
+              className="group text-left"
+            >
               <div className="h-full min-h-[220px] rounded-2xl border border-border bg-card p-10 transition-all duration-200 hover:border-primary hover:shadow-xl hover:shadow-primary/20">
                 <div className="mb-6 flex items-center gap-5">
                   <div className="rounded-xl bg-primary/10 p-4 transition-colors group-hover:bg-primary/20">
                     <Gavel className="h-9 w-9 text-primary" />
                   </div>
 
-                  <h2 className="text-2xl font-black">경매 입찰</h2>
+                  <h2 className="text-2xl font-black">
+                    경매 입찰
+                  </h2>
                 </div>
 
                 <p className="text-lg text-muted-foreground">
                   참가자는 입찰 금액 입력만 사용할 수 있습니다
                 </p>
               </div>
-            </Link>
+            </button>
           )}
 
           <Link href="/players" className="group">
@@ -205,7 +263,9 @@ export default function HomePage() {
                   <Users className="h-9 w-9 text-primary" />
                 </div>
 
-                <h2 className="text-2xl font-black">플레이어 목록</h2>
+                <h2 className="text-2xl font-black">
+                  플레이어 목록
+                </h2>
               </div>
 
               <p className="text-lg text-muted-foreground">
@@ -227,7 +287,9 @@ export default function HomePage() {
                     <Monitor className="h-9 w-9 text-primary" />
                   </div>
 
-                  <h2 className="text-2xl font-black">OBS 오버레이</h2>
+                  <h2 className="text-2xl font-black">
+                    OBS 오버레이
+                  </h2>
                 </div>
 
                 <p className="text-lg text-muted-foreground">
