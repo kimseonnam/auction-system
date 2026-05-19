@@ -953,7 +953,7 @@ export default function OverlayPage() {
           <div className="flex-1 min-h-0 grid grid-cols-[0.68fr_1.32fr] gap-3 overflow-hidden">
             <section className="min-h-0 flex flex-col gap-3 overflow-hidden">
               <div className="h-[200px] shrink-0 bg-[#0c0c0c] border border-[#333] rounded-lg p-4 overflow-hidden">
-                <h3 className="text-white text-[20px] font-black mb-3">경매 로그</h3>
+                <h3 className="text-white text-[22px] font-black mb-3">경매 로그</h3>
                 <div className="space-y-1.5 text-[16px] overflow-hidden pr-2">
                   {logs.filter((log) => ['bid', 'sold', 'passed'].includes(log.action)).length > 0 ? (
                     logs
@@ -980,7 +980,7 @@ export default function OverlayPage() {
 
               <div className="flex-1 min-h-0 bg-[#0c0c0c] border border-[#333] rounded-lg p-4 overflow-hidden">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-white text-[22px] font-black">유찰 순서</h3>
+                  <h3 className="text-white text-[20px] font-black">유찰 순서</h3>
                   <span className="text-[16px] text-white font-bold">
                     {passedPlayers.length}명
                   </span>

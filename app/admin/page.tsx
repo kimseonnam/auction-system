@@ -149,7 +149,7 @@ export default function AdminPage() {
 
           <div className="flex items-center gap-3">
             <span className="px-4 py-2 bg-success/20 text-success rounded-full text-base font-bold">
-              관리자 모드
+              관리자
             </span>
 
             <Button
@@ -185,7 +185,7 @@ export default function AdminPage() {
               </div>
 
               <h3 className="text-2xl font-black mb-3 text-white">
-                추가 기능
+                랜드마크 관리
               </h3>
 
               <p className="text-muted-foreground text-base leading-relaxed">
@@ -197,7 +197,7 @@ export default function AdminPage() {
           <DashboardCard
             href="/admin/settings"
             icon={<Settings className="w-8 h-8 text-primary" />}
-            title="대회 설정"
+            title="설정"
             description="대회명, 팀 수, 포인트 설정"
           />
         </div>

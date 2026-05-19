@@ -201,8 +201,8 @@ export default function HomePage() {
             }`}
           >
             {role === 'admin'
-              ? '관리자 모드'
-              : '경매 참가자 모드'}
+              ? '관리자'
+              : '경매 참가자'}
           </div>
 
           <h1 className="text-6xl font-black tracking-tight">
@@ -212,7 +212,7 @@ export default function HomePage() {
           <p className="text-xl text-muted-foreground">
             {role === 'admin'
               ? '관리자, 플레이어 목록, OBS 오버레이를 확인하세요'
-              : '경매 입찰, 플레이어 목록, OBS 오버레이 화면을 확인하세요'}
+              : '경매 입찰, 플레이어 목록을 확인하세요'}
           </p>
         </div>
 

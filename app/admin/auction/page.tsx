@@ -1144,8 +1144,8 @@ status: 'ready',
               <h1 className="text-2xl font-black text-primary">경매 시스템</h1>
               <p className="text-sm text-muted-foreground">
                 {isAdmin
-                  ? '관리자 모드 / 전체 경매 관리'
-                  : '참가자 모드 / 입찰만 가능합니다'}
+                  ? '관리자 / 전체 경매 관리'
+                  : '참가자 / 입찰만 가능합니다'}
               </p>
             </div>
           </div>
