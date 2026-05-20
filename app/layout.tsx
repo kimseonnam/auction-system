@@ -7,7 +7,7 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'YT',
+  title: '미르컵',
   description: '실시간 플레이어 경매 시스템',
   generator: 'KSN',
   icons: {
