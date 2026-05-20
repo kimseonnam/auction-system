@@ -63,7 +63,14 @@ export default function HomePage() {
       sessionStorage.setItem('auction_role', 'admin')
       sessionStorage.setItem('admin_authenticated', 'true')
 
+      localStorage.removeItem('participant_team')
+      localStorage.removeItem('participant_team_id')
+      localStorage.removeItem('participant_code')
+      localStorage.removeItem('auction_team')
+      localStorage.removeItem('team_code')
+
       setRole('admin')
+      setViewMode('home')
       setError('')
       setCode('')
       return
@@ -74,6 +81,7 @@ export default function HomePage() {
       sessionStorage.removeItem('admin_authenticated')
 
       setRole('participant')
+      setViewMode('home')
       setError('')
       setCode('')
       return
@@ -83,8 +91,15 @@ export default function HomePage() {
   }
 
   const handleLogout = () => {
-    sessionStorage.removeItem('auction_role')
-    sessionStorage.removeItem('admin_authenticated')
+    sessionStorage.clear()
+
+    localStorage.removeItem('participant_team')
+    localStorage.removeItem('participant_team_id')
+    localStorage.removeItem('participant_code')
+    localStorage.removeItem('auction_team')
+    localStorage.removeItem('team_code')
+    localStorage.removeItem('selected_team')
+    localStorage.removeItem('selected_team_id')
 
     setRole(null)
     setViewMode('home')
@@ -147,6 +162,7 @@ export default function HomePage() {
     return (
       <main className="w-screen h-screen bg-black">
         <iframe
+          key="admin-frame"
           src="/admin"
           className="w-full h-full border-0"
         />
@@ -157,26 +173,26 @@ export default function HomePage() {
   if (viewMode === 'participant') {
     return (
       <main className="w-screen h-screen bg-black">
-        
-
         <iframe
+          key="participant-frame"
           src="/participant"
           className="w-full h-full border-0"
         />
       </main>
     )
   }
-  
+
   if (viewMode === 'players') {
-  return (
-    <main className="w-screen h-screen bg-black">
-      <iframe
-        src="/players"
-        className="w-full h-full border-0"
-      />
-    </main>
-  )
-}  
+    return (
+      <main className="w-screen h-screen bg-black">
+        <iframe
+          key="players-frame"
+          src="/players"
+          className="w-full h-full border-0"
+        />
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-10">
@@ -200,9 +216,7 @@ export default function HomePage() {
                 : 'bg-red-600 text-white shadow-[0_0_15px_rgba(255,0,0,0.4)]'
             }`}
           >
-            {role === 'admin'
-              ? '관리자'
-              : '경매 참가자'}
+            {role === 'admin' ? '관리자' : '경매 참가자'}
           </div>
 
           <h1 className="text-6xl font-black tracking-tight">
@@ -218,9 +232,7 @@ export default function HomePage() {
 
         <div
           className={`grid grid-cols-1 gap-10 mt-16 ${
-            role === 'admin'
-              ? 'md:grid-cols-3'
-              : 'md:grid-cols-2'
+            role === 'admin' ? 'md:grid-cols-3' : 'md:grid-cols-2'
           }`}
         >
           {role === 'admin' ? (
@@ -234,9 +246,7 @@ export default function HomePage() {
                     <Settings className="h-9 w-9 text-primary" />
                   </div>
 
-                  <h2 className="text-2xl font-black">
-                    관리자
-                  </h2>
+                  <h2 className="text-2xl font-black">관리자</h2>
                 </div>
 
                 <p className="text-lg text-muted-foreground">
@@ -255,9 +265,7 @@ export default function HomePage() {
                     <Gavel className="h-9 w-9 text-primary" />
                   </div>
 
-                  <h2 className="text-2xl font-black">
-                    경매 입찰
-                  </h2>
+                  <h2 className="text-2xl font-black">경매 입찰</h2>
                 </div>
 
                 <p className="text-lg text-muted-foreground">
@@ -277,9 +285,7 @@ export default function HomePage() {
                   <Users className="h-9 w-9 text-primary" />
                 </div>
 
-                <h2 className="text-2xl font-black">
-                  플레이어 목록
-                </h2>
+                <h2 className="text-2xl font-black">플레이어 목록</h2>
               </div>
 
               <p className="text-lg text-muted-foreground">
@@ -301,9 +307,7 @@ export default function HomePage() {
                     <Monitor className="h-9 w-9 text-primary" />
                   </div>
 
-                  <h2 className="text-2xl font-black">
-                    OBS 오버레이
-                  </h2>
+                  <h2 className="text-2xl font-black">OBS 오버레이</h2>
                 </div>
 
                 <p className="text-lg text-muted-foreground">

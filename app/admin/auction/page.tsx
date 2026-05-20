@@ -55,8 +55,6 @@ type LocalAuctionLog = {
   created_at: string
 }
 
-type AuctionRole = 'admin' | 'participant'
-
 const DEFAULT_TIMER = 20
 const DEFAULT_POINTS = 0
 const PLAYER_TIMER_OWNER_KEY = 'player_auction_timer_owner'
@@ -202,19 +200,13 @@ export default function AuctionPage() {
   const teamsRef = useRef<LocalTeam[]>([])
   const logsRef = useRef<LocalAuctionLog[]>([])
 
-  const [role, setRole] = useState<AuctionRole>('participant')
   const [teams, setTeams] = useState<LocalTeam[]>([])
   const [players, setPlayers] = useState<LocalPlayer[]>([])
   const [auctionState, setAuctionState] = useState<LocalAuctionState>(defaultAuctionState)
   const [logs, setLogs] = useState<LocalAuctionLog[]>([])
   const [isPointPanelOpen, setIsPointPanelOpen] = useState(false)
   const [pointDrafts, setPointDrafts] = useState<Record<string, string>>({})
-  const [participantTeamId, setParticipantTeamId] = useState<string | null>(null)
-  const [joinCodeInput, setJoinCodeInput] = useState('')
-  const [joinCodeError, setJoinCodeError] = useState('')
 
-  const isAdmin = role === 'admin'
-  const participantTeam = teams.find((team) => team.id === participantTeamId) || null
 
   useEffect(() => {
     auctionStateRef.current = auctionState
@@ -447,14 +439,6 @@ export default function AuctionPage() {
   useEffect(() => {
     localStorage.setItem('auction_mode', 'player')
 
-    const savedRole = sessionStorage.getItem('auction_role')
-    setRole(savedRole === 'admin' || savedRole === 'participant' ? savedRole : 'participant')
-
-    const savedTeamId = sessionStorage.getItem('auction_participant_team_id')
-    if (savedTeamId) {
-      setParticipantTeamId(savedTeamId)
-    }
-
     loadAuctionData()
 
     const channel = supabase
@@ -556,35 +540,6 @@ return () => {
     if (error) console.error('auction_logs insert error:', error)
   }
 
-  const handleParticipantLogin = () => {
-    if (isAdmin) return
-
-    const code = joinCodeInput.trim()
-    if (!code) {
-      setJoinCodeError('팀 코드를 입력해주세요.')
-      return
-    }
-
-    const matchedTeam = teams.find((team) => (team.join_code || '').trim() === code)
-
-    if (!matchedTeam) {
-      setJoinCodeError('일치하는 팀 코드가 없습니다.')
-      return
-    }
-
-    sessionStorage.setItem('auction_participant_team_id', matchedTeam.id)
-    setParticipantTeamId(matchedTeam.id)
-    setJoinCodeInput('')
-    setJoinCodeError('')
-  }
-
-  const handleParticipantLogout = () => {
-    sessionStorage.removeItem('auction_participant_team_id')
-    setParticipantTeamId(null)
-    setJoinCodeInput('')
-    setJoinCodeError('')
-  }
-
 
   const auctionPlayers = players.filter((player) => !player.is_captain)
   const currentPlayer = auctionPlayers.find((p) => p.id === auctionState.current_player_id)
@@ -616,7 +571,6 @@ return () => {
   }
 
   const handleApplyTeamPoint = async (team: LocalTeam) => {
-    if (!isAdmin) return
 
     const rawValue = pointDrafts[team.id] ?? '0'
     const parsedValue = rawValue.trim() === '' ? 0 : parseInt(rawValue)
@@ -634,7 +588,6 @@ return () => {
   }
 
   const handleApplyAllTeamPoints = async () => {
-    if (!isAdmin) return
 
     const nextTeams = teams.map((team) => {
       const rawValue = pointDrafts[team.id] ?? String(team.points ?? 0)
@@ -658,7 +611,6 @@ return () => {
   }
 
   const handleResetAllTeamPoints = async () => {
-    if (!isAdmin) return
     if (!confirm('모든 팀 포인트를 0으로 초기화할까요?')) return
 
     const resetTeams = teams.map((team) => ({
@@ -692,7 +644,6 @@ return () => {
   }
 
   const handleUndo = async () => {
-    if (!isAdmin) return
 
     const saved = localStorage.getItem('auction_undo')
 
@@ -796,7 +747,6 @@ setAuctionState((prev) => {
 ])
 
   const handleStart = async () => {
-    if (!isAdmin) return
 
     if (!currentPlayer || currentPlayer.is_captain) {
       const firstPlayer = getNextPlayer()
@@ -835,7 +785,6 @@ setAuctionState((prev) => {
   }
 
   const handlePause = async () => {
-    if (!isAdmin) return
     await updateAuctionState({
   status: 'paused',
   auction_end_time: null,
@@ -843,7 +792,6 @@ setAuctionState((prev) => {
   }
 
   const handleSold = async () => {
-    if (!isAdmin) return
     if (!currentPlayer || !auctionState.current_bidder_team_id) return
 
     saveSnapshot()
@@ -889,7 +837,6 @@ setAuctionState((prev) => {
   }
 
   const handlePassed = async () => {
-    if (!isAdmin) return
     if (!currentPlayer) return
 
     saveSnapshot()
@@ -914,10 +861,6 @@ setAuctionState((prev) => {
   }
 
   const handleBid = async (team: LocalTeam, amount: number) => {
-    if (!isAdmin && participantTeamId !== team.id) {
-      alert('로그인한 본인 팀만 입찰할 수 있습니다.')
-      return
-    }
 
     const latestState = auctionStateRef.current
     const latestPlayers = playersRef.current
@@ -967,7 +910,6 @@ setAuctionState((prev) => {
   }
 
   const handlePrevPlayer = async () => {
-    if (!isAdmin) return
 
     const availablePlayers = getAvailablePlayers()
     const currentIndex = currentPlayer
@@ -990,7 +932,6 @@ setAuctionState((prev) => {
   }
 
   const handleNextPlayer = async () => {
-    if (!isAdmin) return
 
     const nextPlayer = getNextPlayer()
     if (!nextPlayer) return
@@ -1010,7 +951,6 @@ status: 'paused',
   }
 
   const handleSelectPlayer = async (player: LocalPlayer) => {
-    if (!isAdmin) return
     if (player.is_captain) return
 
     await clearAuctionLogs()
@@ -1028,7 +968,6 @@ status: 'paused',
   }
 
   const handleShufflePlayers = async () => {
-    if (!isAdmin) return
 
     const availablePlayers = getAvailablePlayers()
     const unavailablePlayers = players.filter((p) => p.team_id || p.is_passed || p.is_captain)
@@ -1075,7 +1014,6 @@ status: 'paused',
   }
 
   const handleResetAll = async () => {
-    if (!isAdmin) return
     if (!confirm('경매 기록을 전체 초기화할까요?')) return
 
     saveSnapshot()
@@ -1115,7 +1053,6 @@ status: 'ready',
   }
 
   const handleRecoverPassed = async (player: LocalPlayer) => {
-    if (!isAdmin) return
 
     saveSnapshot()
 
@@ -1134,7 +1071,7 @@ status: 'ready',
       <div className="mx-auto max-w-[1880px] space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href={isAdmin ? '/admin' : '/'}>
+            <Link href="/admin">
               <Button variant="ghost" size="icon">
                 <ArrowLeft className="h-5 w-5" />
               </Button>
@@ -1143,26 +1080,21 @@ status: 'ready',
             <div>
               <h1 className="text-2xl font-black text-primary">경매 시스템</h1>
               <p className="text-sm text-muted-foreground">
-                {isAdmin
-                  ? '관리자 / 전체 경매 관리'
-                  : '참가자 / 입찰만 가능합니다'}
+                관리자 / 전체 경매 관리
               </p>
             </div>
           </div>
 
 <div className="flex items-center gap-2">
-  {isAdmin && (
-    <Button
+  <Button
       variant="outline"
       size="sm"
       onClick={() => window.open('/overlay', '_blank')}
     >
       OBS 화면 열기
     </Button>
-  )}
 
-  {isAdmin && (
-    <Button
+  <Button
       variant="outline"
       size="sm"
       onClick={openPointPanel}
@@ -1170,10 +1102,8 @@ status: 'ready',
       <Coins className="mr-1 h-4 w-4" />
       개별 포인트 지급
     </Button>
-  )}
 
-  {isAdmin && (
-    <Button
+  <Button
       variant="outline"
       size="sm"
       onClick={handleShufflePlayers}
@@ -1181,10 +1111,8 @@ status: 'ready',
       <Shuffle className="mr-1 h-4 w-4" />
       랜덤 경매 순서 돌리기
     </Button>
-  )}
 
-  {isAdmin && (
-<Button
+  <Button
   variant="outline"
   size="sm"
   onClick={() => {
@@ -1195,58 +1123,10 @@ status: 'ready',
   <Trophy className="mr-1 h-4 w-4" />
   결과창
 </Button>
-  )}
 </div>
         </div>
 
-        {!isAdmin && (
-          <section className="rounded-xl border border-border bg-card p-4">
-            {participantTeam ? (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-muted-foreground">현재 로그인된 팀</p>
-                  <p className="text-xl font-black text-primary">{participantTeam.name}</p>
-                  <p className="text-sm font-bold text-white">보유 포인트: {participantTeam.points}포인트</p>
-                </div>
-
-                <Button variant="outline" size="sm" onClick={handleParticipantLogout}>
-                  팀 코드 로그아웃
-                </Button>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="min-w-[260px] space-y-2">
-                  <label className="text-sm font-bold text-white">팀 코드 입력</label>
-                  <input
-                    value={joinCodeInput}
-                    onChange={(e) => {
-                      setJoinCodeInput(e.target.value)
-                      setJoinCodeError('')
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleParticipantLogin()
-                    }}
-                    placeholder="전달받은코드"
-                    className="w-full rounded border border-border bg-input px-3 py-2 text-sm font-bold"
-                  />
-                  {joinCodeError && (
-                    <p className="text-xs font-bold text-destructive">{joinCodeError}</p>
-                  )}
-                </div>
-
-                <Button onClick={handleParticipantLogin}>
-                  팀 입장
-                </Button>
-
-                <p className="text-sm text-muted-foreground">
-                  팀 코드를 입력해야 본인 팀으로만 입찰할 수 있습니다.
-                </p>
-              </div>
-            )}
-          </section>
-        )}
-
-        {isAdmin && isPointPanelOpen && (
+        {isPointPanelOpen && (
           <section className="rounded-xl border border-border bg-card p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
@@ -1374,14 +1254,12 @@ status: 'ready',
                 key={player.id}
                 type="button"
                 onClick={() => handleSelectPlayer(player)}
-                disabled={!isAdmin}
+                disabled={false}
                 className={`relative aspect-square overflow-hidden rounded-lg border bg-secondary transition-all ${
             index === 0
             ? 'border-primary ring-2 ring-primary'
             : 'border-border'
-           } ${player.is_passed ? 'opacity-40' : ''} ${
-              isAdmin ? 'cursor-pointer' : 'cursor-default'
-             }`}
+           } ${player.is_passed ? 'opacity-40' : ''} cursor-pointer`}
             >
                     {player.image_url ? (
                       <img src={player.image_url} alt={player.name} className="h-full w-full object-cover" />
@@ -1414,11 +1292,9 @@ status: 'ready',
                   <div key={player.id} className="flex items-center justify-between rounded-lg bg-secondary p-3">
                     <span className="font-bold">{player.name}</span>
 
-                    {isAdmin && (
-                      <Button size="sm" variant="ghost" onClick={() => handleRecoverPassed(player)}>
-                        <RotateCcw className="h-4 w-4" />
-                      </Button>
-                    )}
+                    <Button size="sm" variant="ghost" onClick={() => handleRecoverPassed(player)}>
+                      <RotateCcw className="h-4 w-4" />
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -1428,8 +1304,7 @@ status: 'ready',
           </section>
         </div>
 
-        {isAdmin && (
-          <div className="rounded-xl border border-border bg-card/80 p-3 flex flex-wrap items-center justify-center gap-2">
+        <div className="rounded-xl border border-border bg-card/80 p-3 flex flex-wrap items-center justify-center gap-2">
             <Button
               className="h-10 px-4 text-sm font-bold bg-red-600 hover:bg-red-700"
               onClick={handleStart}
@@ -1501,8 +1376,7 @@ status: 'ready',
             >
               전체 초기화
             </Button>
-          </div>
-        )}
+        </div>
 
         <div className="grid grid-cols-[1fr_620px_1fr] gap-4">
           <section className="space-y-3">
@@ -1518,7 +1392,6 @@ status: 'ready',
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
                   disabled={
                     auctionState.status === 'ready' ||
-                    (!isAdmin && participantTeamId !== team.id) ||
                     players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3 ||
                     hasSameTierPlayer(
                       players.filter((p) => p.team_id === team.id && !p.is_captain),
@@ -1526,14 +1399,12 @@ status: 'ready',
                     )
                   }
                   canBid={
-                    (isAdmin || participantTeamId === team.id) &&
                     players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3 &&
                     !hasSameTierPlayer(
                       players.filter((p) => p.team_id === team.id && !p.is_captain),
                       currentPlayer
                     )
                   }
-                  isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
               ))}
             </div>
@@ -1602,7 +1473,6 @@ status: 'ready',
                   isCurrentBidder={team.id === auctionState.current_bidder_team_id}
                   disabled={
                     auctionState.status === 'ready' ||
-                    (!isAdmin && participantTeamId !== team.id) ||
                     players.filter((p) => p.team_id === team.id && !p.is_captain).length >= 3 ||
                     hasSameTierPlayer(
                       players.filter((p) => p.team_id === team.id && !p.is_captain),
@@ -1610,14 +1480,12 @@ status: 'ready',
                     )
                   }
                   canBid={
-                    (isAdmin || participantTeamId === team.id) &&
                     players.filter((p) => p.team_id === team.id && !p.is_captain).length < 3 &&
                     !hasSameTierPlayer(
                       players.filter((p) => p.team_id === team.id && !p.is_captain),
                       currentPlayer
                     )
                   }
-                  isParticipantLoggedIn={isAdmin || Boolean(participantTeamId)}
                 />
               ))}
             </div>
@@ -1636,7 +1504,6 @@ interface TeamBidCardProps {
   isCurrentBidder: boolean
   disabled: boolean
   canBid: boolean
-  isParticipantLoggedIn: boolean
 }
 
 function TeamBidCard({
@@ -1647,18 +1514,13 @@ function TeamBidCard({
   isCurrentBidder,
   disabled,
   canBid,
-  isParticipantLoggedIn,
 }: TeamBidCardProps) {
   const [bidAmount, setBidAmount] = useState('')
 
   const handleCustomBid = () => {
-    if (!isParticipantLoggedIn) {
-      alert('먼저 팀 코드를 입력해주세요.')
-      return
-    }
 
     if (!canBid) {
-      alert('본인 팀만 입찰할 수 있거나, 같은 티어 중복 제한으로 입찰할 수 없습니다.')
+      alert('입찰 조건으로 인해 입찰할 수 없습니다.')
       return
     }
 
@@ -1705,7 +1567,7 @@ function TeamBidCard({
           type="number"
           value={bidAmount}
           onChange={(e) => setBidAmount(e.target.value)}
-          placeholder={canBid ? '입찰액' : '본인 팀만 입찰'}
+          placeholder={canBid ? '입찰액' : '입찰 불가'}
           className="min-w-0 flex-1 rounded border border-border bg-input px-3 py-2 text-sm"
           disabled={disabled || !canBid}
         />
