@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Users, Play, Settings, LogOut } from 'lucide-react'
+import { ArrowLeft, Users, Play, Settings } from 'lucide-react'
 import { supabase } from '@/lib/supabase/client'
 
 type LocalTeam = {
@@ -119,13 +119,6 @@ export default function AdminPage() {
     }
   }, [refreshCounts])
 
-  const handleLogout = () => {
-    sessionStorage.removeItem('admin_authenticated')
-    sessionStorage.removeItem('auction_role')
-
-    window.location.replace('/')
-  }
-
   return (
     <main className="min-h-screen p-6 md:p-10">
       <div className="max-w-7xl mx-auto space-y-10">
@@ -152,14 +145,6 @@ export default function AdminPage() {
               관리자
             </span>
 
-            <Button
-              variant="outline"
-              className="h-11 px-5 font-bold"
-              onClick={handleLogout}
-            >
-              <LogOut className="mr-2 h-4 w-4" />
-              로그아웃
-            </Button>
           </div>
         </div>
 
