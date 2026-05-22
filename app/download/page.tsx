@@ -5,7 +5,7 @@ import { useEffect } from 'react'
 export default function DownloadPage() {
   useEffect(() => {
     window.location.href =
-      'https://drive.google.com/file/d/1a3LHwvuQ_wPInU1_hTT4c3Ccc2BT1Sxu/view'
+      'https://drive.google.com/uc?export=download&id=1a3LHwvuQ_wPInU1_hTT4c3Ccc2BT1Sxu'
   }, [])
 
   return (
