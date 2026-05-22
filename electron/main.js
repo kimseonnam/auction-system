@@ -112,12 +112,18 @@ function createMainWindow() {
       mainWindow.setSize(1400, 820);
       mainWindow.center();
       mainWindow.show();
+      mainWindow.setTitle(MAIN_WINDOW_TITLE);
     }, 4000);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(APP_URL) || url.startsWith(DEV_URL)) {
+    if (url.includes("/overlay")) {
       createOverlayWindow(url);
+      return { action: "deny" };
+    }
+
+    if (url.startsWith(APP_URL) || url.startsWith(DEV_URL)) {
+      mainWindow.loadURL(url);
       return { action: "deny" };
     }
 
@@ -144,6 +150,7 @@ function createOverlayWindow(url) {
   });
 
   forceWindowTitle(overlay, OVERLAY_WINDOW_TITLE);
+
   overlay.loadURL(url);
 
   overlay.once("ready-to-show", () => {
