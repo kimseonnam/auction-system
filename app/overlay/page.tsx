@@ -1119,7 +1119,7 @@ function ResultsOverlay({
     }
 
     window.addEventListener('storage', handleStorageChange)
-    const syncInterval = setInterval(readResultPage, 500)
+    const syncInterval = setInterval(readResultPage, 1000)
 
     return () => {
       window.removeEventListener('storage', handleStorageChange)

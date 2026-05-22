@@ -498,7 +498,7 @@ useEffect(() => {
 
     const interval = setInterval(() => {
       touchConnection()
-    }, 3000)
+    }, 5000)
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
